@@ -65,7 +65,7 @@ fn main() -> miette::Result<()> {
                 .wrap_err_with(|| format!("Failed to read file: {}", filename.display()))?;
 
             let parser = imp::Parser::new(&file_contents);
-            eprintln!("{}", parser.parse_expression().unwrap())
+            println!("{}", parser.parse_expression().unwrap())
         }
 
         Commands::Run { filename } => {
@@ -74,7 +74,7 @@ fn main() -> miette::Result<()> {
                 .wrap_err_with(|| format!("Failed to read file: {}", filename.display()))?;
 
             let parser = imp::Parser::new(&file_contents);
-            eprintln!("{}", parser.parse().unwrap())
+            println!("{}", parser.parse().unwrap())
         }
     }
 
