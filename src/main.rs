@@ -1,37 +1,86 @@
-use std::env;
+use clap::{Parser, Subcommand};
+use codecrafters_interpreter as imp;
+use miette::IntoDiagnostic;
+use miette::WrapErr;
 use std::fs;
-use std::io::{self, Write};
+use std::path::PathBuf;
 
-fn main() {
-    let args: Vec<String> = env::args().collect();
-    if args.len() < 3 {
-        writeln!(io::stderr(), "Usage: {} tokenize <filename>", args[0]).unwrap();
-        return;
+/// Simple program to greet a person
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand, Debug)]
+enum Commands {
+    Tokenize { filename: PathBuf },
+    Parse { filename: PathBuf },
+    Run { filename: PathBuf },
+}
+
+fn main() -> miette::Result<()> {
+    let args = Args::parse();
+    let mut any_cc_error = false;
+
+    match args.command {
+        Commands::Tokenize { filename } => {
+            let file_contents = fs::read_to_string(&filename)
+                .into_diagnostic()
+                .wrap_err_with(|| format!("Failed to read file: {}", filename.display()))?;
+
+            let lexer = imp::Lexer::new(&file_contents);
+
+            for token in lexer {
+                let token = match token {
+                    Ok(token) => token,
+                    Err(e) => {
+                        eprintln!("{e:?}");
+                        if let Some(unrecognized) = e.downcast_ref::<imp::lex::SingleTokenError>() {
+                            any_cc_error = true;
+
+                            eprintln!(
+                                "[line {}] Error: Unexpected character: {}",
+                                unrecognized.line(),
+                                unrecognized.token
+                            );
+                        } else if let Some(unterminated) =
+                            e.downcast_ref::<imp::lex::StringTerminationError>()
+                        {
+                            any_cc_error = true;
+                            eprintln!("[line {}] Error: Unterminated string.", unterminated.line(),);
+                        }
+                        continue;
+                    }
+                };
+                println!("{token}");
+            }
+            println!("EOF  null");
+        }
+
+        Commands::Parse { filename } => {
+            let file_contents = fs::read_to_string(&filename)
+                .into_diagnostic()
+                .wrap_err_with(|| format!("Failed to read file: {}", filename.display()))?;
+
+            let parser = imp::Parser::new(&file_contents);
+            eprintln!("{}", parser.parse_expression().unwrap())
+        }
+
+        Commands::Run { filename } => {
+            let file_contents = fs::read_to_string(&filename)
+                .into_diagnostic()
+                .wrap_err_with(|| format!("Failed to read file: {}", filename.display()))?;
+
+            let parser = imp::Parser::new(&file_contents);
+            eprintln!("{}", parser.parse().unwrap())
+        }
     }
 
-    let command = &args[1];
-    let filename = &args[2];
-
-    match command.as_str() {
-        "tokenize" => {
-            // You can use print statements as follows for debugging, they'll be visible when running tests.
-            writeln!(io::stderr(), "Logs from your program will appear here!").unwrap();
-
-            let file_contents = fs::read_to_string(filename).unwrap_or_else(|_| {
-                writeln!(io::stderr(), "Failed to read file {}", filename).unwrap();
-                String::new()
-            });
-
-            // Uncomment this block to pass the first stage
-            // if !file_contents.is_empty() {
-            //     panic!("Scanner not implemented");
-            // } else {
-            //     println!("EOF  null"); // Placeholder, remove this line when implementing the scanner
-            // }
-        }
-        _ => {
-            writeln!(io::stderr(), "Unknown command: {}", command).unwrap();
-            return;
-        }
+    if any_cc_error {
+        std::process::exit(65);
     }
+
+    Ok(())
 }
