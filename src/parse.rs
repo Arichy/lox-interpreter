@@ -27,7 +27,9 @@ pub enum Atom<'de> {
 impl fmt::Display for Atom<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Atom::String(s) => write!(f, "\"{s}\""),
+            // NOTE: this feels more correct
+            // Atom::String(s) => write!(f, "\"{s}\""),
+            Atom::String(s) => write!(f, "{s}"),
             Atom::Number(n) => {
                 if *n == n.trunc() {
                     // tests require that integers are printed as x.0
@@ -167,22 +169,29 @@ impl fmt::Display for TokenTree<'_> {
 fn prefix_binding_power(op: Op) -> ((), u8) {
     match op {
         Op::Print | Op::Return => ((), 1),
-        Op::Bang | Op::Minus => ((), 9),
+        Op::Bang | Op::Minus => ((), 11),
         _ => panic!("bad op: {:?}", op),
     }
 }
 fn postfix_binding_power(op: Op) -> Option<(u8, ())> {
     let res = match op {
-        Op::Call => (11, ()),
+        Op::Call => (13, ()),
         _ => return None,
     };
     Some(res)
 }
 fn infix_binding_power(op: Op) -> Option<(u8, u8)> {
     let res = match op {
-        Op::Plus | Op::Minus => (5, 6),
-        Op::Star | Op::Slash => (7, 8),
-        Op::Field => (14, 13),
+        Op::And | Op::Or => (3, 4),
+        Op::BangEqual
+        | Op::EqualEqual
+        | Op::Less
+        | Op::LessEqual
+        | Op::Greater
+        | Op::GreaterEqual => (5, 6),
+        Op::Plus | Op::Minus => (7, 8),
+        Op::Star | Op::Slash => (9, 10),
+        Op::Field => (16, 15),
         _ => return None,
     };
     Some(res)
@@ -712,9 +721,9 @@ impl<'de> Parser<'de> {
                         "here"
                     )],
                     help = format!("Unexpected {token:?}"),
-                    "Expected a statement"
+                    "Expected an expression"
                 )
-                .with_source_code(self.whole.to_string()))
+                .with_source_code(self.whole.to_string()));
             }
         };
 

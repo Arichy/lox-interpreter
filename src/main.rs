@@ -1,8 +1,10 @@
 use clap::{Parser, Subcommand};
 use codecrafters_interpreter as imp;
+use codecrafters_interpreter::parse::TokenTree;
 use miette::IntoDiagnostic;
 use miette::WrapErr;
 use std::fs;
+use std::os::unix::process;
 use std::path::PathBuf;
 
 /// Simple program to greet a person
@@ -22,10 +24,10 @@ enum Commands {
 
 fn main() -> miette::Result<()> {
     let args = Args::parse();
-    let mut any_cc_error = false;
 
     match args.command {
         Commands::Tokenize { filename } => {
+            let mut any_cc_error = false;
             let file_contents = fs::read_to_string(&filename)
                 .into_diagnostic()
                 .wrap_err_with(|| format!("Failed to read file: {}", filename.display()))?;
@@ -57,6 +59,10 @@ fn main() -> miette::Result<()> {
                 println!("{token}");
             }
             println!("EOF  null");
+
+            if any_cc_error {
+                std::process::exit(65);
+            }
         }
 
         Commands::Parse { filename } => {
@@ -65,7 +71,15 @@ fn main() -> miette::Result<()> {
                 .wrap_err_with(|| format!("Failed to read file: {}", filename.display()))?;
 
             let parser = imp::Parser::new(&file_contents);
-            println!("{}", parser.parse_expression().unwrap())
+
+            match parser.parse_expression() {
+                Ok(tt) => println!("{tt}"),
+                Err(e) => {
+                    // TODO: match error line format
+                    eprintln!("{e:?}");
+                    std::process::exit(65);
+                }
+            }
         }
 
         Commands::Run { filename } => {
@@ -76,10 +90,6 @@ fn main() -> miette::Result<()> {
             let parser = imp::Parser::new(&file_contents);
             println!("{}", parser.parse().unwrap())
         }
-    }
-
-    if any_cc_error {
-        std::process::exit(65);
     }
 
     Ok(())
