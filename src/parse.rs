@@ -107,7 +107,13 @@ impl fmt::Display for Op {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum TokenTree<'de> {
+pub struct TokenTree<'de> {
+    pub inner: TokenTreeInner<'de>,
+    pub range: (usize, usize),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum TokenTreeInner<'de> {
     Atom(Atom<'de>),
     Cons(Op, Vec<TokenTree<'de>>),
     Fun {
@@ -128,16 +134,22 @@ pub enum TokenTree<'de> {
 
 impl fmt::Display for TokenTree<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.inner.fmt(f)
+    }
+}
+
+impl fmt::Display for TokenTreeInner<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            TokenTree::Atom(i) => write!(f, "{}", i),
-            TokenTree::Cons(head, rest) => {
+            TokenTreeInner::Atom(i) => write!(f, "{}", i),
+            TokenTreeInner::Cons(head, rest) => {
                 write!(f, "({}", head)?;
                 for s in rest {
                     write!(f, " {s}")?;
                 }
                 write!(f, ")")
             }
-            TokenTree::Fun {
+            TokenTreeInner::Fun {
                 name,
                 parameters,
                 body,
@@ -148,14 +160,14 @@ impl fmt::Display for TokenTree<'_> {
                 }
                 write!(f, " {body})")
             }
-            TokenTree::Call { callee, arguments } => {
+            TokenTreeInner::Call { callee, arguments } => {
                 write!(f, "(({callee})")?;
                 for a in arguments {
                     write!(f, " {a}")?;
                 }
                 write!(f, ")")
             }
-            TokenTree::If { condition, yes, no } => {
+            TokenTreeInner::If { condition, yes, no } => {
                 write!(f, "(if {condition} {yes}")?;
                 if let Some(no) = no {
                     write!(f, " {no}")?;
@@ -214,50 +226,55 @@ impl<'de> Parser<'de> {
         self.parse_statement_within(0)
     }
 
-    pub fn parse_block(&mut self) -> Result<TokenTree<'de>, Error> {
-        self.lexer.expect(TokenKind::LeftBrace, "missing {")?;
+    /// The usizes in Result is the range
+    pub fn parse_block(&mut self) -> Result<(TokenTree<'de>, usize, usize), Error> {
+        let left_brace_token = self.lexer.expect(TokenKind::LeftBrace, "missing {")?;
 
         // TODO: in a loop with semicolons? depends on class vs body
         let block = self.parse_statement_within(0)?;
-        self.lexer.expect(TokenKind::RightBrace, "missing }")?;
+        let right_brace_token = self.lexer.expect(TokenKind::RightBrace, "missing }")?;
 
-        Ok(block)
+        Ok((block, left_brace_token.offset, right_brace_token.offset + 1))
     }
 
-    pub fn parse_fn_call_arguments(&mut self) -> Result<Vec<TokenTree<'de>>, Error> {
+    /// The usize in Result is the offset of right paren, the end position of the call expression
+    pub fn parse_fn_call_arguments(&mut self) -> Result<(Vec<TokenTree<'de>>, usize), Error> {
         let mut arguments = Vec::new();
 
-        if matches!(
-            self.lexer.peek(),
+        match self.lexer.peek() {
             Some(Ok(Token {
                 kind: TokenKind::RightParen,
+                offset,
                 ..
-            }))
-        ) {
-            // immediate argument list end
-        } else {
-            loop {
-                let argument = self.parse_expression_within(0).wrap_err_with(|| {
-                    format!("in argument #{} of function call", arguments.len() + 1)
-                })?;
+            })) => Ok((arguments, offset + 1)),
 
-                arguments.push(argument);
+            _ => {
+                let mut end;
 
-                let token = self
-                    .lexer
-                    .expect_where(
-                        |token| matches!(token.kind, TokenKind::RightParen | TokenKind::Comma),
-                        "continuing argument list",
-                    )
-                    .wrap_err("in argument list of function call")?;
+                loop {
+                    let argument = self.parse_expression_within(0).wrap_err_with(|| {
+                        format!("in argument #{} of function call", arguments.len() + 1)
+                    })?;
 
-                if token.kind == TokenKind::RightParen {
-                    break;
+                    arguments.push(argument);
+
+                    let token = self
+                        .lexer
+                        .expect_where(
+                            |token| matches!(token.kind, TokenKind::RightParen | TokenKind::Comma),
+                            "continuing argument list",
+                        )
+                        .wrap_err("in argument list of function call")?;
+                    end = token.offset;
+
+                    if token.kind == TokenKind::RightParen {
+                        break;
+                    }
                 }
+
+                Ok((arguments, end + 1))
             }
         }
-
-        Ok(arguments)
     }
 
     pub fn parse_statement_within(
@@ -267,7 +284,12 @@ impl<'de> Parser<'de> {
     ) -> Result<TokenTree<'de>, Error> {
         let lhs = match self.lexer.next() {
             Some(Ok(token)) => token,
-            None => return Ok(TokenTree::Atom(Atom::Nil)),
+            None => {
+                return Ok(TokenTree {
+                    inner: TokenTreeInner::Atom(Atom::Nil),
+                    range: (self.lexer.offset(), self.lexer.offset()),
+                })
+            }
             Some(Err(e)) => {
                 // let msg = looking_for_msg();
 
@@ -279,28 +301,41 @@ impl<'de> Parser<'de> {
             Token {
                 kind: TokenKind::Ident,
                 origin,
-                ..
-            } => TokenTree::Atom(Atom::Ident(origin)),
+                offset,
+            } => TokenTree {
+                inner: TokenTreeInner::Atom(Atom::Ident(origin)),
+                range: (offset, offset + origin.len()),
+            },
 
             Token {
                 kind: TokenKind::Super,
-                ..
-            } => TokenTree::Atom(Atom::Super),
+                origin,
+                offset,
+            } => TokenTree {
+                inner: TokenTreeInner::Atom(Atom::Super),
+                range: (offset, offset + origin.len()),
+            },
 
             Token {
                 kind: TokenKind::This,
-                ..
-            } => TokenTree::Atom(Atom::This),
+                origin,
+                offset,
+            } => TokenTree {
+                inner: TokenTreeInner::Atom(Atom::This),
+                range: (offset, offset + origin.len()),
+            },
 
             Token {
                 kind: TokenKind::LeftParen,
-                ..
+                origin,
+                offset,
             } => {
                 let lhs = self
                     .parse_expression_within(0)
                     .wrap_err("in bracketed expression")?;
 
-                self.lexer
+                let right_paren_token = self
+                    .lexer
                     .expect(
                         TokenKind::RightParen,
                         "Unexpected end to bracketed expression",
@@ -308,13 +343,18 @@ impl<'de> Parser<'de> {
                     .wrap_err("after bracketed expression")?;
 
                 // lhs
-                TokenTree::Cons(Op::Group, vec![lhs])
+                // TokenTree::Cons(Op::Group, vec![lhs])
+                TokenTree {
+                    inner: TokenTreeInner::Cons(Op::Group, vec![lhs]),
+                    range: (offset, right_paren_token.offset + 1),
+                }
             }
 
             // unary prefix expression
             Token {
                 kind: TokenKind::Print | TokenKind::Return,
-                ..
+                offset,
+                origin,
             } => {
                 let op = match lhs.kind {
                     TokenKind::Print => Op::Print,
@@ -326,12 +366,18 @@ impl<'de> Parser<'de> {
                 let rhs = self
                     .parse_expression_within(r_bp)
                     .wrap_err_with(|| format!("on the right-hand side of {op:?}"))?;
-                return Ok(TokenTree::Cons(op, vec![rhs]));
+
+                // return Ok(TokenTree::Cons(op, vec![rhs]));
+                return Ok(TokenTree {
+                    range: (offset, rhs.range.1),
+                    inner: TokenTreeInner::Cons(op, vec![rhs]),
+                });
             }
 
             Token {
                 kind: TokenKind::For,
-                ..
+                offset,
+                origin,
             } => {
                 self.lexer
                     .expect(TokenKind::LeftParen, "missing (")
@@ -363,14 +409,20 @@ impl<'de> Parser<'de> {
                     .expect(TokenKind::LeftBrace, "missing {")
                     .wrap_err("in for loop")?;
 
-                let block = self.parse_block().wrap_err("in body of for loop")?;
+                let (block, block_start, block_end) =
+                    self.parse_block().wrap_err("in body of for loop")?;
 
-                return Ok(TokenTree::Cons(Op::For, vec![init, cond, inc, block]));
+                // return Ok(TokenTree::Cons(Op::For, vec![init, cond, inc, block]));
+                return Ok(TokenTree {
+                    inner: TokenTreeInner::Cons(Op::For, vec![init, cond, inc, block]),
+                    range: (offset, block_end),
+                });
             }
 
             Token {
                 kind: TokenKind::While,
-                ..
+                offset,
+                origin,
             } => {
                 self.lexer
                     .expect(TokenKind::LeftParen, "missing (")
@@ -384,14 +436,20 @@ impl<'de> Parser<'de> {
                     .expect(TokenKind::RightParen, "missing )")
                     .wrap_err("in while loop condition")?;
 
-                let block = self.parse_block().wrap_err("in body of while loop")?;
+                let (block, block_start, block_end) =
+                    self.parse_block().wrap_err("in body of while loop")?;
 
-                return Ok(TokenTree::Cons(Op::While, vec![cond, block]));
+                // return Ok(TokenTree::Cons(Op::While, vec![cond, block]));
+                return Ok(TokenTree {
+                    inner: TokenTreeInner::Cons(Op::While, vec![cond, block]),
+                    range: (offset, block_end),
+                });
             }
 
             Token {
                 kind: TokenKind::Var,
-                ..
+                offset,
+                origin,
             } => {
                 let token = self
                     .lexer
@@ -399,7 +457,11 @@ impl<'de> Parser<'de> {
                     .wrap_err("in variable assignment")?;
                 assert_eq!(token.kind, TokenKind::Ident);
 
-                let ident = TokenTree::Atom(Atom::Ident(token.origin));
+                // let ident = TokenTree::Atom(Atom::Ident(token.origin));
+                let ident = TokenTree {
+                    inner: TokenTreeInner::Atom(Atom::Ident(token.origin)),
+                    range: (token.offset, token.offset + token.origin.len()),
+                };
 
                 self.lexer
                     .expect(TokenKind::Equal, "missing =")
@@ -409,12 +471,18 @@ impl<'de> Parser<'de> {
                     .parse_expression_within(0)
                     .wrap_err("in variable assignment expression")?;
 
-                return Ok(TokenTree::Cons(Op::Var, vec![ident, second]));
+                // return Ok(TokenTree::Cons(Op::Var, vec![ident, second]));
+
+                return Ok(TokenTree {
+                    range: (offset, second.range.1),
+                    inner: TokenTreeInner::Cons(Op::Var, vec![ident, second]),
+                });
             }
 
             Token {
                 kind: TokenKind::Class,
-                ..
+                offset,
+                origin,
             } => {
                 let token = self
                     .lexer
@@ -422,16 +490,27 @@ impl<'de> Parser<'de> {
                     .wrap_err("in class name")?;
                 assert_eq!(token.kind, TokenKind::Ident);
 
-                let ident = TokenTree::Atom(Atom::Ident(token.origin));
+                // let ident = TokenTree::Atom(Atom::Ident(token.origin));
+                let ident = TokenTree {
+                    inner: TokenTreeInner::Atom(Atom::Ident(token.origin)),
+                    range: (token.offset, token.offset + token.origin.len()),
+                };
 
-                let block = self.parse_block().wrap_err("in class definition")?;
+                let (block, block_start, block_end) =
+                    self.parse_block().wrap_err("in class definition")?;
 
-                return Ok(TokenTree::Cons(Op::Class, vec![ident, block]));
+                // return Ok(TokenTree::Cons(Op::Class, vec![ident, block]));
+
+                return Ok(TokenTree {
+                    inner: TokenTreeInner::Cons(Op::Class, vec![ident, block]),
+                    range: (offset, block_end),
+                });
             }
 
             Token {
                 kind: TokenKind::Fun,
-                ..
+                offset,
+                origin,
             } => {
                 let token = self
                     .lexer
@@ -482,20 +561,30 @@ impl<'de> Parser<'de> {
                     }
                 }
 
-                let block = self
+                let (block, block_start, block_end) = self
                     .parse_block()
                     .wrap_err_with(|| format!("in body of function {name}"))?;
 
-                return Ok(TokenTree::Fun {
-                    name: ident,
-                    parameters,
-                    body: Box::new(block),
+                // return Ok(TokenTree::Fun {
+                //     name: ident,
+                //     parameters,
+                //     body: Box::new(block),
+                // });
+
+                return Ok(TokenTree {
+                    inner: TokenTreeInner::Fun {
+                        name: ident,
+                        parameters,
+                        body: Box::new(block),
+                    },
+                    range: (offset, block_end),
                 });
             }
 
             Token {
                 kind: TokenKind::If,
-                ..
+                offset,
+                origin,
             } => {
                 self.lexer
                     .expect(TokenKind::LeftParen, "missing (")
@@ -517,7 +606,8 @@ impl<'de> Parser<'de> {
                 // self.lexer
                 //     .expect(TokenKind::RightBrace, "missing }")
                 //     .wrap_err("in if condition")?;
-                let block = self.parse_block().wrap_err("in body of if")?;
+                let (block, block_start, block_end) =
+                    self.parse_block().wrap_err("in body of if")?;
 
                 let mut otherwise = None;
                 if matches!(
@@ -533,10 +623,23 @@ impl<'de> Parser<'de> {
                     otherwise = Some(self.parse_block().wrap_err("in body of else")?);
                 }
 
-                return Ok(TokenTree::If {
-                    condition: Box::new(cond),
-                    yes: Box::new(block),
-                    no: otherwise.map(Box::new),
+                // return Ok(TokenTree::If {
+                //     condition: Box::new(cond),
+                //     yes: Box::new(block),
+                //     no: otherwise.map(Box::new),
+                // });
+
+                let end = otherwise
+                    .as_ref()
+                    .map_or(block_end, |otherwise| otherwise.2);
+
+                return Ok(TokenTree {
+                    inner: TokenTreeInner::If {
+                        condition: Box::new(cond),
+                        yes: Box::new(block),
+                        no: otherwise.map(|(otherwise_block, _, _)| Box::new(otherwise_block)),
+                    },
+                    range: (offset, end),
                 });
             }
 
@@ -563,16 +666,19 @@ impl<'de> Parser<'de> {
                     .expect_err("checked Err above"))
                 .wrap_err("in place of expected operator");
             }
-            let op = match op.map(|res| res.as_ref().expect("handled Err above")) {
+
+            let (op, &op_start) = match op.map(|res| res.as_ref().expect("handled Err above")) {
                 None => break,
                 Some(Token {
                     kind: TokenKind::LeftParen,
+                    offset,
                     ..
-                }) => Op::Call,
+                }) => (Op::Call, offset),
                 Some(Token {
                     kind: TokenKind::Dot,
+                    offset,
                     ..
-                }) => Op::Field,
+                }) => (Op::Field, offset),
                 Some(token) => {
                     return Err(miette::miette!(
                         labels = vec![LabeledSpan::at(
@@ -593,14 +699,30 @@ impl<'de> Parser<'de> {
                 self.lexer.next();
 
                 lhs = if op == Op::Call {
-                    TokenTree::Call {
-                        callee: Box::new(lhs),
-                        arguments: self
-                            .parse_fn_call_arguments()
-                            .wrap_err("in function call arguments")?,
+                    // TokenTree::Call {
+                    //     callee: Box::new(lhs),
+                    //     arguments: self
+                    //         .parse_fn_call_arguments()
+                    //         .wrap_err("in function call arguments")?,
+                    // }
+                    let (arguments, end) = self
+                        .parse_fn_call_arguments()
+                        .wrap_err("in function call arguments")?;
+
+                    TokenTree {
+                        inner: TokenTreeInner::Call {
+                            callee: Box::new(lhs),
+                            arguments,
+                        },
+                        range: (op_start, end),
                     }
                 } else {
-                    TokenTree::Cons(op, vec![lhs])
+                    // TokenTree::Cons(op, vec![lhs])
+
+                    TokenTree {
+                        range: (op_start, lhs.range.1),
+                        inner: TokenTreeInner::Cons(op, vec![lhs]),
+                    }
                 };
                 continue;
             }
@@ -614,7 +736,12 @@ impl<'de> Parser<'de> {
                 let rhs = self
                     .parse_expression_within(r_bp)
                     .wrap_err_with(|| format!("on the right-hand side of {lhs} {op}"))?;
-                lhs = TokenTree::Cons(op, vec![lhs, rhs]);
+                // lhs = TokenTree::Cons(op, vec![lhs, rhs]);
+
+                lhs = TokenTree {
+                    range: (lhs.range.0, rhs.range.1),
+                    inner: TokenTreeInner::Cons(op, vec![lhs, rhs]),
+                };
 
                 continue;
             }
@@ -631,7 +758,12 @@ impl<'de> Parser<'de> {
     ) -> Result<TokenTree<'de>, Error> {
         let lhs = match self.lexer.next() {
             Some(Ok(token)) => token,
-            None => return Ok(TokenTree::Atom(Atom::Nil)),
+            None => {
+                return Ok(TokenTree {
+                    inner: TokenTreeInner::Atom(Atom::Nil),
+                    range: (self.lexer.offset(), self.lexer.offset()),
+                })
+            }
             Some(Err(e)) => {
                 // let msg = looking_for_msg();
 
@@ -644,62 +776,98 @@ impl<'de> Parser<'de> {
             Token {
                 kind: TokenKind::String,
                 origin,
-                ..
-            } => TokenTree::Atom(Atom::String(Token::unescape(origin))),
+                offset,
+            } => TokenTree {
+                inner: TokenTreeInner::Atom(Atom::String(Token::unescape(origin))),
+                range: (offset, offset + origin.len()),
+            },
             Token {
                 kind: TokenKind::Number(n),
-                ..
-            } => TokenTree::Atom(Atom::Number(n)),
+                offset,
+                origin,
+            } => TokenTree {
+                inner: TokenTreeInner::Atom(Atom::Number(n)),
+                range: (offset, offset + origin.len()),
+            },
             Token {
                 kind: TokenKind::True,
-                ..
-            } => TokenTree::Atom(Atom::Bool(true)),
+                offset,
+                origin,
+            } => TokenTree {
+                inner: TokenTreeInner::Atom(Atom::Bool(true)),
+                range: (offset, offset + origin.len()),
+            },
             Token {
                 kind: TokenKind::False,
-                ..
-            } => TokenTree::Atom(Atom::Bool(false)),
+                offset,
+                origin,
+            } => TokenTree {
+                inner: TokenTreeInner::Atom(Atom::Bool(false)),
+                range: (offset, offset + origin.len()),
+            },
             Token {
                 kind: TokenKind::Nil,
-                ..
-            } => TokenTree::Atom(Atom::Nil),
+                offset,
+                origin,
+            } => TokenTree {
+                inner: TokenTreeInner::Atom(Atom::Nil),
+                range: (offset, offset + origin.len()),
+            },
             Token {
                 kind: TokenKind::Ident,
                 origin,
-                ..
-            } => TokenTree::Atom(Atom::Ident(origin)),
+                offset,
+            } => TokenTree {
+                inner: TokenTreeInner::Atom(Atom::Ident(origin)),
+                range: (offset, offset + origin.len()),
+            },
             Token {
                 kind: TokenKind::Super,
-                ..
-            } => TokenTree::Atom(Atom::Super),
+                offset,
+                origin,
+            } => TokenTree {
+                inner: TokenTreeInner::Atom(Atom::Super),
+                range: (offset, offset + origin.len()),
+            },
 
             Token {
                 kind: TokenKind::This,
-                ..
-            } => TokenTree::Atom(Atom::This),
+                offset,
+                origin,
+            } => TokenTree {
+                inner: TokenTreeInner::Atom(Atom::This),
+                range: (offset, offset + origin.len()),
+            },
 
             // group
             Token {
                 kind: TokenKind::LeftParen,
-                ..
+                offset,
+                origin,
             } => {
                 let lhs = self
                     .parse_expression_within(0)
                     .wrap_err("in bracketed expression")?;
 
-                self.lexer
+                let right_paren_token = self
+                    .lexer
                     .expect(
                         TokenKind::RightParen,
                         "Unexpected end to bracketed expression terminator",
                     )
                     .wrap_err("after bracketed expression")?;
 
-                TokenTree::Cons(Op::Group, vec![lhs])
+                TokenTree {
+                    inner: TokenTreeInner::Cons(Op::Group, vec![lhs]),
+                    range: (offset, right_paren_token.offset + 1),
+                }
             }
 
             // unary prefix expression
             Token {
                 kind: TokenKind::Bang | TokenKind::Minus,
-                ..
+                offset,
+                origin,
             } => {
                 let op = match lhs.kind {
                     TokenKind::Bang => Op::Bang,
@@ -711,7 +879,11 @@ impl<'de> Parser<'de> {
                 let rhs = self
                     .parse_expression_within(r_bp)
                     .wrap_err("in right-hand side")?;
-                TokenTree::Cons(op, vec![rhs])
+                // TokenTree::Cons(op, vec![rhs])
+                TokenTree {
+                    range: (offset, rhs.range.1),
+                    inner: TokenTreeInner::Cons(op, vec![rhs]),
+                }
             }
 
             token => {
@@ -738,7 +910,7 @@ impl<'de> Parser<'de> {
                     .expect_err("checked Err above"))
                 .wrap_err("in place of expected operator");
             }
-            let op = match op.map(|res| res.as_ref().expect("handled Err above")) {
+            let (op, &op_start) = match op.map(|res| res.as_ref().expect("handled Err above")) {
                 None => break,
                 Some(Token {
                     kind:
@@ -750,61 +922,75 @@ impl<'de> Parser<'de> {
                 }) => break,
                 Some(Token {
                     kind: TokenKind::LeftParen,
+                    offset,
                     ..
-                }) => Op::Call,
+                }) => (Op::Call, offset),
                 Some(Token {
                     kind: TokenKind::Dot,
+                    offset,
                     ..
-                }) => Op::Field,
+                }) => (Op::Field, offset),
                 Some(Token {
                     kind: TokenKind::Minus,
+                    offset,
                     ..
-                }) => Op::Minus,
+                }) => (Op::Minus, offset),
                 Some(Token {
                     kind: TokenKind::Plus,
+                    offset,
                     ..
-                }) => Op::Plus,
+                }) => (Op::Plus, offset),
                 Some(Token {
                     kind: TokenKind::Star,
+                    offset,
                     ..
-                }) => Op::Star,
+                }) => (Op::Star, offset),
                 Some(Token {
                     kind: TokenKind::BangEqual,
+                    offset,
                     ..
-                }) => Op::BangEqual,
+                }) => (Op::BangEqual, offset),
 
                 Some(Token {
                     kind: TokenKind::EqualEqual,
+                    offset,
                     ..
-                }) => Op::EqualEqual,
+                }) => (Op::EqualEqual, offset),
                 Some(Token {
                     kind: TokenKind::LessEqual,
+                    offset,
                     ..
-                }) => Op::LessEqual,
+                }) => (Op::LessEqual, offset),
                 Some(Token {
                     kind: TokenKind::GreaterEqual,
+                    offset,
                     ..
-                }) => Op::GreaterEqual,
+                }) => (Op::GreaterEqual, offset),
                 Some(Token {
                     kind: TokenKind::Less,
+                    offset,
                     ..
-                }) => Op::Less,
+                }) => (Op::Less, offset),
                 Some(Token {
                     kind: TokenKind::Greater,
+                    offset,
                     ..
-                }) => Op::Greater,
+                }) => (Op::Greater, offset),
                 Some(Token {
                     kind: TokenKind::Slash,
+                    offset,
                     ..
-                }) => Op::Slash,
+                }) => (Op::Slash, offset),
                 Some(Token {
                     kind: TokenKind::And,
+                    offset,
                     ..
-                }) => Op::And,
+                }) => (Op::And, offset),
                 Some(Token {
                     kind: TokenKind::Or,
+                    offset,
                     ..
-                }) => Op::Or,
+                }) => (Op::Or, offset),
                 Some(token) => {
                     return Err(miette::miette!(
                         labels = vec![LabeledSpan::at(
@@ -825,13 +1011,23 @@ impl<'de> Parser<'de> {
                 self.lexer.next();
 
                 lhs = match op {
-                    Op::Call => TokenTree::Call {
-                        callee: Box::new(lhs),
-                        arguments: self
+                    Op::Call => {
+                        let (arguments, end) = self
                             .parse_fn_call_arguments()
-                            .wrap_err("in function call arguments")?,
+                            .wrap_err("in function call arguments")?;
+
+                        TokenTree {
+                            inner: TokenTreeInner::Call {
+                                callee: Box::new(lhs),
+                                arguments,
+                            },
+                            range: (op_start, end),
+                        }
+                    }
+                    _ => TokenTree {
+                        range: (op_start, lhs.range.1),
+                        inner: TokenTreeInner::Cons(op, vec![lhs]),
                     },
-                    _ => TokenTree::Cons(op, vec![lhs]),
                 };
 
                 continue;
@@ -853,7 +1049,11 @@ impl<'de> Parser<'de> {
                         let rhs = self
                             .parse_expression_within(r_bp)
                             .wrap_err_with(|| format!("on the right-hand side of {lhs} {op}"))?;
-                        TokenTree::Cons(op, vec![lhs, rhs])
+                        // TokenTree::Cons(op, vec![lhs, rhs])
+                        TokenTree {
+                            range: (lhs.range.0, rhs.range.1),
+                            inner: TokenTreeInner::Cons(op, vec![lhs, rhs]),
+                        }
                     }
                 };
 

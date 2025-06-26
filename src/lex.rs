@@ -168,6 +168,10 @@ impl<'de> Lexer<'de> {
 }
 
 impl<'de> Lexer<'de> {
+    pub fn offset(&self) -> usize {
+        self.byte
+    }
+
     pub fn expect(
         &mut self,
         expected: TokenKind,
