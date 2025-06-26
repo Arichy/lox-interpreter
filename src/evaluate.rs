@@ -122,8 +122,36 @@ impl<'de> Evaluator<'de> {
                         _ => EvaluateResult::Bool(!true),
                     }
                 }
+                Op::Plus => {
+                    let lhs = &operands[0];
+                    let rhs = &operands[1];
+                    let lhs_value = self.evaluate_token_tree(lhs)?;
+                    let rhs_value = self.evaluate_token_tree(rhs)?;
 
-                Op::Plus | Op::Minus | Op::Star | Op::Slash => {
+                    match (lhs_value, rhs_value) {
+                        (EvaluateResult::Number(left_num), EvaluateResult::Number(right_num)) => {
+                            EvaluateResult::Number(left_num + right_num)
+                        }
+
+                        (
+                            EvaluateResult::String(left_string),
+                            EvaluateResult::String(right_string),
+                        ) => EvaluateResult::String(left_string + right_string),
+
+                        _ => {
+                            return Err(miette::miette!(
+                                labels = vec![
+                                    LabeledSpan::at(lhs.range.0..lhs.range.1, "lhs"),
+                                    LabeledSpan::at(rhs.range.0..rhs.range.1, "rhs")
+                                ],
+                                "{op} can only be used with two numbers or two strings",
+                            )
+                            .with_source_code(self.whole.to_string()));
+                        }
+                    }
+                }
+
+                Op::Minus | Op::Star | Op::Slash => {
                     let lhs = &operands[0];
                     let rhs = &operands[1];
                     let lhs_value = self.evaluate_token_tree(lhs)?;
@@ -143,14 +171,14 @@ impl<'de> Evaluator<'de> {
                         } else {
                             return Err(miette::miette!(
                                 labels = vec![LabeledSpan::at(rhs.range.0..rhs.range.1, "here")],
-                                "{op} can only be applied on numbers",
+                                "{op} can only be used with numbers",
                             )
                             .with_source_code(self.whole.to_string()));
                         }
                     } else {
                         return Err(miette::miette!(
                             labels = vec![LabeledSpan::at(lhs.range.0..lhs.range.1, "here")],
-                            "{op} can only be applied on numbers",
+                            "{op} can only be used with numbers",
                         )
                         .with_source_code(self.whole.to_string()));
                     }
