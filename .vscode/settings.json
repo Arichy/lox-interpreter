@@ -1,0 +1,4 @@
+{
+  "augment.completions.disableCompletionsByLanguage": ["git-commit", "scminput", "rust"],
+  "augment.nextEdit.enableAutoApply": false
+}

@@ -1,5 +1,6 @@
 use clap::{Parser, Subcommand};
 use codecrafters_interpreter as imp;
+use codecrafters_interpreter::evaluate;
 use codecrafters_interpreter::parse::TokenTree;
 use miette::IntoDiagnostic;
 use miette::WrapErr;
@@ -19,6 +20,7 @@ struct Args {
 enum Commands {
     Tokenize { filename: PathBuf },
     Parse { filename: PathBuf },
+    Evaluate { filename: PathBuf },
     Run { filename: PathBuf },
 }
 
@@ -76,6 +78,24 @@ fn main() -> miette::Result<()> {
                 Ok(tt) => println!("{tt}"),
                 Err(e) => {
                     // TODO: match error line format
+                    eprintln!("{e:?}");
+                    std::process::exit(65);
+                }
+            }
+        }
+
+        Commands::Evaluate { filename } => {
+            let file_contents = fs::read_to_string(&filename)
+                .into_diagnostic()
+                .wrap_err_with(|| format!("Failed to read file: {}", filename.display()))?;
+
+            let evaluator = imp::evaluate::Evaluator::new(&file_contents);
+
+            match evaluator.evaluate_expression() {
+                Ok(evaluate_result) => {
+                    println!("{evaluate_result}");
+                }
+                Err(e) => {
                     eprintln!("{e:?}");
                     std::process::exit(65);
                 }
