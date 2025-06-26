@@ -4,7 +4,7 @@ use std::borrow::Cow;
 use miette::{Error, LabeledSpan};
 
 use crate::{
-    parse::{Atom, TokenTree, TokenTreeInner},
+    parse::{Atom, Op, TokenTree, TokenTreeInner},
     Parser,
 };
 
@@ -40,14 +40,21 @@ impl<'de> Evaluator<'de> {
     }
 
     pub fn evaluate_expression(mut self) -> Result<EvaluateResult<'de>, Error> {
-        let token_tree = self.parser.parse_expression()?;
+        let parser = std::mem::take(&mut self.parser);
+        let token_tree = parser.parse_expression()?;
+        self.evaluate_token_tree(&token_tree)
+    }
 
-        let evaluate_result = match token_tree.inner {
+    fn evaluate_token_tree(
+        &self,
+        token_tree: &TokenTree<'de>,
+    ) -> Result<EvaluateResult<'de>, Error> {
+        let evaluate_result = match &token_tree.inner {
             TokenTreeInner::Atom(atom) => match atom {
-                Atom::String(string) => EvaluateResult::String(string),
-                Atom::Number(num) => EvaluateResult::Number(num),
+                Atom::String(string) => EvaluateResult::String(string.clone()),
+                Atom::Number(num) => EvaluateResult::Number(*num),
                 Atom::Nil => EvaluateResult::Nil,
-                Atom::Bool(boolean) => EvaluateResult::Bool(boolean),
+                Atom::Bool(boolean) => EvaluateResult::Bool(*boolean),
                 Atom::Ident(ident) => {
                     return Err(miette::miette!(
                         labels = vec![LabeledSpan::at(
@@ -80,6 +87,17 @@ impl<'de> Evaluator<'de> {
                     .with_source_code(self.whole.to_string()))
                 }
             },
+
+            TokenTreeInner::Cons(op, operands) => match op {
+                Op::Group => {
+                    self.evaluate_token_tree(operands.first().expect("Group must not be empty."))?
+                }
+
+                _ => {
+                    todo!()
+                }
+            },
+
             _ => {
                 todo!()
             }

@@ -6,6 +6,7 @@ use crate::{
     Lexer,
 };
 
+#[derive(Debug, Default)]
 pub struct Parser<'de> {
     whole: &'de str,
     lexer: Lexer<'de>,

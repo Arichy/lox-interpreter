@@ -150,6 +150,7 @@ impl Token<'_> {
     }
 }
 
+#[derive(Debug, Default)]
 pub struct Lexer<'de> {
     whole: &'de str,
     rest: &'de str,
