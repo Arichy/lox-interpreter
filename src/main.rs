@@ -72,7 +72,7 @@ fn main() -> miette::Result<()> {
                 .into_diagnostic()
                 .wrap_err_with(|| format!("Failed to read file: {}", filename.display()))?;
 
-            let mut parser = imp::Parser::new(&file_contents);
+            let parser = imp::Parser::new(&file_contents);
 
             match parser.parse_expression() {
                 Ok(tt) => println!("{tt}"),
@@ -89,7 +89,7 @@ fn main() -> miette::Result<()> {
                 .into_diagnostic()
                 .wrap_err_with(|| format!("Failed to read file: {}", filename.display()))?;
 
-            let mut evaluator = imp::evaluate::Evaluator::new(&file_contents);
+            let evaluator = imp::evaluate::Evaluator::new(&file_contents);
 
             match evaluator.evaluate_expression() {
                 Ok(evaluate_result) => {

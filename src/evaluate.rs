@@ -93,6 +93,36 @@ impl<'de> Evaluator<'de> {
                     self.evaluate_token_tree(operands.first().expect("Group must not be empty."))?
                 }
 
+                Op::Minus => {
+                    let rest = self.evaluate_token_tree(
+                        operands.first().expect("- must be followed by a number."),
+                    )?;
+                    if let EvaluateResult::Number(num) = rest {
+                        EvaluateResult::Number(-num)
+                    } else {
+                        return Err(miette::miette!(
+                            labels = vec![LabeledSpan::at(
+                                token_tree.range.0..token_tree.range.1,
+                                "here"
+                            )],
+                            "- must be followed by a number",
+                        )
+                        .with_source_code(self.whole.to_string()));
+                    }
+                }
+
+                Op::Bang => {
+                    let rest = self.evaluate_token_tree(
+                        operands.first().expect("! must be followed by a bool."),
+                    )?;
+
+                    match rest {
+                        EvaluateResult::Bool(boolean) => EvaluateResult::Bool(!boolean),
+                        EvaluateResult::Nil => EvaluateResult::Bool(!false),
+                        _ => EvaluateResult::Bool(!true),
+                    }
+                }
+
                 _ => {
                     todo!()
                 }
