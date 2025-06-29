@@ -24,7 +24,10 @@ impl<'de> Runner<'de> {
 
                 Ok(())
             }
-            Err(err) => return Err(err),
+            Err(err) => {
+                eprintln!("{err:?}");
+                std::process::exit(65);
+            }
         }
     }
 

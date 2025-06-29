@@ -223,7 +223,6 @@ impl<'de> Parser<'de> {
     }
 
     pub fn parse(&mut self) -> Result<Vec<TokenTree<'de>>, Error> {
-        // TODO: in a loop
         let mut token_trees = vec![];
         loop {
             match self.parse_statement_within(0) {

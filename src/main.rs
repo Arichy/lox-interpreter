@@ -113,7 +113,10 @@ fn main() -> miette::Result<()> {
 
             let runner = imp::run::Runner::new(&file_contents);
 
-            runner.run();
+            if let Err(e) = runner.run() {
+                eprintln!("{e:?}");
+                std::process::exit(70);
+            }
         }
 
         _ => {
