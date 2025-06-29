@@ -105,7 +105,7 @@ impl<'de> Evaluator<'de> {
                                 token_tree.range.0..token_tree.range.1,
                                 "here"
                             )],
-                            "- must be followed by a number",
+                            "Operand must be a number",
                         )
                         .with_source_code(self.whole.to_string()));
                     }

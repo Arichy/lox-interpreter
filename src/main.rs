@@ -97,7 +97,7 @@ fn main() -> miette::Result<()> {
                 }
                 Err(e) => {
                     eprintln!("{e:?}");
-                    std::process::exit(65);
+                    std::process::exit(70);
                 }
             }
         }
