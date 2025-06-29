@@ -248,13 +248,7 @@ impl<'de> Evaluator<'de> {
                             EvaluateResult::Bool(result_value)
                         }
 
-                        _ => {
-                            return Err(miette::miette!(
-                                labels = vec![LabeledSpan::at(lhs.range.0..rhs.range.1, "here")],
-                                "{op} can only be used with values in same type",
-                            )
-                            .with_source_code(self.whole.to_string()));
-                        }
+                        _ => EvaluateResult::Bool(false),
                     }
                 }
 
