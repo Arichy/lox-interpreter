@@ -131,6 +131,7 @@ pub enum TokenTreeInner<'de> {
         yes: Box<TokenTree<'de>>,
         no: Option<Box<TokenTree<'de>>>,
     },
+    Eof,
 }
 
 impl fmt::Display for TokenTree<'_> {
@@ -174,6 +175,9 @@ impl fmt::Display for TokenTreeInner<'_> {
                     write!(f, " {no}")?;
                 }
                 write!(f, ")")
+            }
+            TokenTreeInner::Eof => {
+                write!(f, "")
             }
         }
     }
@@ -230,7 +234,7 @@ impl<'de> Parser<'de> {
                     if matches!(
                         &token,
                         TokenTree {
-                            inner: TokenTreeInner::Atom(Atom::Nil),
+                            inner: TokenTreeInner::Eof,
                             ..
                         }
                     ) {
@@ -240,7 +244,10 @@ impl<'de> Parser<'de> {
                         token_trees.push(token);
                     }
                 }
-                Err(err) => return Err(err),
+                Err(err) => {
+                    eprintln!("{err:?}");
+                    return Err(err);
+                }
             }
         }
 
@@ -316,7 +323,7 @@ impl<'de> Parser<'de> {
             Some(Ok(token)) => token,
             None => {
                 return Ok(TokenTree {
-                    inner: TokenTreeInner::Atom(Atom::Nil),
+                    inner: TokenTreeInner::Eof,
                     range: (self.lexer.offset(), self.lexer.offset()),
                 })
             }
@@ -953,7 +960,7 @@ impl<'de> Parser<'de> {
             Some(Ok(token)) => token,
             None => {
                 return Ok(TokenTree {
-                    inner: TokenTreeInner::Atom(Atom::Nil),
+                    inner: TokenTreeInner::Eof,
                     range: (self.lexer.offset(), self.lexer.offset()),
                 })
             }

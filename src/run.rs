@@ -74,6 +74,8 @@ impl<'de> Runner<'de> {
                 } => {}
 
                 TokenTreeInner::If { condition, yes, no } => {}
+
+                TokenTreeInner::Eof => {}
             },
             _ => {}
         }

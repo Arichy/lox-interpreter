@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 use clap::{Parser, Subcommand};
 use codecrafters_interpreter as imp;
 use codecrafters_interpreter::evaluate;
