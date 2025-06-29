@@ -328,6 +328,47 @@ impl<'de> Parser<'de> {
         };
 
         let mut lhs = match lhs {
+            // atoms
+            Token {
+                kind: TokenKind::String,
+                origin,
+                offset,
+            } => TokenTree {
+                inner: TokenTreeInner::Atom(Atom::String(Token::unescape(origin))),
+                range: (offset, offset + origin.len()),
+            },
+            Token {
+                kind: TokenKind::Number(n),
+                offset,
+                origin,
+            } => TokenTree {
+                inner: TokenTreeInner::Atom(Atom::Number(n)),
+                range: (offset, offset + origin.len()),
+            },
+            Token {
+                kind: TokenKind::True,
+                offset,
+                origin,
+            } => TokenTree {
+                inner: TokenTreeInner::Atom(Atom::Bool(true)),
+                range: (offset, offset + origin.len()),
+            },
+            Token {
+                kind: TokenKind::False,
+                offset,
+                origin,
+            } => TokenTree {
+                inner: TokenTreeInner::Atom(Atom::Bool(false)),
+                range: (offset, offset + origin.len()),
+            },
+            Token {
+                kind: TokenKind::Nil,
+                offset,
+                origin,
+            } => TokenTree {
+                inner: TokenTreeInner::Atom(Atom::Nil),
+                range: (offset, offset + origin.len()),
+            },
             Token {
                 kind: TokenKind::Ident,
                 origin,
@@ -336,11 +377,10 @@ impl<'de> Parser<'de> {
                 inner: TokenTreeInner::Atom(Atom::Ident(origin)),
                 range: (offset, offset + origin.len()),
             },
-
             Token {
                 kind: TokenKind::Super,
-                origin,
                 offset,
+                origin,
             } => TokenTree {
                 inner: TokenTreeInner::Atom(Atom::Super),
                 range: (offset, offset + origin.len()),
@@ -348,13 +388,39 @@ impl<'de> Parser<'de> {
 
             Token {
                 kind: TokenKind::This,
-                origin,
                 offset,
+                origin,
             } => TokenTree {
                 inner: TokenTreeInner::Atom(Atom::This),
                 range: (offset, offset + origin.len()),
             },
 
+            // Token {
+            //     kind: TokenKind::Ident,
+            //     origin,
+            //     offset,
+            // } => TokenTree {
+            //     inner: TokenTreeInner::Atom(Atom::Ident(origin)),
+            //     range: (offset, offset + origin.len()),
+            // },
+
+            // Token {
+            //     kind: TokenKind::Super,
+            //     origin,
+            //     offset,
+            // } => TokenTree {
+            //     inner: TokenTreeInner::Atom(Atom::Super),
+            //     range: (offset, offset + origin.len()),
+            // },
+
+            // Token {
+            //     kind: TokenKind::This,
+            //     origin,
+            //     offset,
+            // } => TokenTree {
+            //     inner: TokenTreeInner::Atom(Atom::This),
+            //     range: (offset, offset + origin.len()),
+            // },
             Token {
                 kind: TokenKind::LeftParen,
                 origin,
@@ -404,6 +470,28 @@ impl<'de> Parser<'de> {
                     range: (offset, rhs.range.1),
                     inner: TokenTreeInner::Cons(op, vec![rhs]),
                 });
+            }
+
+            Token {
+                kind: TokenKind::Bang | TokenKind::Minus,
+                offset,
+                origin,
+            } => {
+                let op = match lhs.kind {
+                    TokenKind::Bang => Op::Bang,
+                    TokenKind::Minus => Op::Minus,
+                    _ => unreachable!("by the outer match arm pattern"),
+                };
+
+                let ((), r_bp) = prefix_binding_power(op);
+                let rhs = self
+                    .parse_expression_within(r_bp)
+                    .wrap_err("in right-hand side")?;
+                // TokenTree::Cons(op, vec![rhs])
+                TokenTree {
+                    range: (offset, rhs.range.1),
+                    inner: TokenTreeInner::Cons(op, vec![rhs]),
+                }
             }
 
             Token {
@@ -704,6 +792,14 @@ impl<'de> Parser<'de> {
             let (op, &op_start) = match op.map(|res| res.as_ref().expect("handled Err above")) {
                 None => break,
                 Some(Token {
+                    kind:
+                        TokenKind::RightParen
+                        | TokenKind::Comma
+                        | TokenKind::Semicolon
+                        | TokenKind::RightBrace,
+                    ..
+                }) => break,
+                Some(Token {
                     kind: TokenKind::LeftParen,
                     offset,
                     ..
@@ -713,6 +809,67 @@ impl<'de> Parser<'de> {
                     offset,
                     ..
                 }) => (Op::Field, offset),
+                Some(Token {
+                    kind: TokenKind::Minus,
+                    offset,
+                    ..
+                }) => (Op::Minus, offset),
+                Some(Token {
+                    kind: TokenKind::Plus,
+                    offset,
+                    ..
+                }) => (Op::Plus, offset),
+                Some(Token {
+                    kind: TokenKind::Star,
+                    offset,
+                    ..
+                }) => (Op::Star, offset),
+                Some(Token {
+                    kind: TokenKind::BangEqual,
+                    offset,
+                    ..
+                }) => (Op::BangEqual, offset),
+
+                Some(Token {
+                    kind: TokenKind::EqualEqual,
+                    offset,
+                    ..
+                }) => (Op::EqualEqual, offset),
+                Some(Token {
+                    kind: TokenKind::LessEqual,
+                    offset,
+                    ..
+                }) => (Op::LessEqual, offset),
+                Some(Token {
+                    kind: TokenKind::GreaterEqual,
+                    offset,
+                    ..
+                }) => (Op::GreaterEqual, offset),
+                Some(Token {
+                    kind: TokenKind::Less,
+                    offset,
+                    ..
+                }) => (Op::Less, offset),
+                Some(Token {
+                    kind: TokenKind::Greater,
+                    offset,
+                    ..
+                }) => (Op::Greater, offset),
+                Some(Token {
+                    kind: TokenKind::Slash,
+                    offset,
+                    ..
+                }) => (Op::Slash, offset),
+                Some(Token {
+                    kind: TokenKind::And,
+                    offset,
+                    ..
+                }) => (Op::And, offset),
+                Some(Token {
+                    kind: TokenKind::Or,
+                    offset,
+                    ..
+                }) => (Op::Or, offset),
                 Some(token) => {
                     return Err(miette::miette!(
                         labels = vec![LabeledSpan::at(
@@ -720,7 +877,7 @@ impl<'de> Parser<'de> {
                             "here"
                         )],
                         help = format!("Unexpected {token:?}"),
-                        "Expected an operator",
+                        "Expected an infix operator"
                     )
                     .with_source_code(self.whole.to_string()))
                 }
