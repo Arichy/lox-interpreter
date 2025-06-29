@@ -10,7 +10,7 @@ use crate::{
 
 pub struct Evaluator<'de> {
     whole: &'de str,
-    parser: Parser<'de>,
+    pub parser: Parser<'de>,
 }
 
 pub enum EvaluateResult<'de> {
@@ -45,7 +45,7 @@ impl<'de> Evaluator<'de> {
         self.evaluate_token_tree(&token_tree)
     }
 
-    fn evaluate_token_tree(
+    pub fn evaluate_token_tree(
         &self,
         token_tree: &TokenTree<'de>,
     ) -> Result<EvaluateResult<'de>, Error> {

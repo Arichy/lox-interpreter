@@ -72,10 +72,14 @@ fn main() -> miette::Result<()> {
                 .into_diagnostic()
                 .wrap_err_with(|| format!("Failed to read file: {}", filename.display()))?;
 
-            let parser = imp::Parser::new(&file_contents);
+            let mut parser = imp::Parser::new(&file_contents);
 
-            match parser.parse_expression() {
-                Ok(tt) => println!("{tt}"),
+            match parser.parse() {
+                Ok(tt_list) => {
+                    for tt in tt_list {
+                        println!("{tt}")
+                    }
+                }
                 Err(e) => {
                     // TODO: match error line format
                     eprintln!("{e:?}");
@@ -107,8 +111,13 @@ fn main() -> miette::Result<()> {
                 .into_diagnostic()
                 .wrap_err_with(|| format!("Failed to read file: {}", filename.display()))?;
 
-            let parser = imp::Parser::new(&file_contents);
-            println!("{}", parser.parse().unwrap())
+            let runner = imp::run::Runner::new(&file_contents);
+
+            runner.run();
+        }
+
+        _ => {
+            unimplemented!()
         }
     }
 

@@ -5,3 +5,5 @@ pub mod parse;
 pub use parse::Parser;
 
 pub mod evaluate;
+
+pub mod run;

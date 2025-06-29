@@ -222,9 +222,30 @@ impl<'de> Parser<'de> {
         self.parse_expression_within(0)
     }
 
-    pub fn parse(mut self) -> Result<TokenTree<'de>, Error> {
+    pub fn parse(&mut self) -> Result<Vec<TokenTree<'de>>, Error> {
         // TODO: in a loop
-        self.parse_statement_within(0)
+        let mut token_trees = vec![];
+        loop {
+            match self.parse_statement_within(0) {
+                Ok(token) => {
+                    if matches!(
+                        &token,
+                        TokenTree {
+                            inner: TokenTreeInner::Atom(Atom::Nil),
+                            ..
+                        }
+                    ) {
+                        break;
+                        // eof
+                    } else {
+                        token_trees.push(token);
+                    }
+                }
+                Err(err) => return Err(err),
+            }
+        }
+
+        Ok(token_trees)
     }
 
     /// The usizes in Result is the range
@@ -275,6 +296,15 @@ impl<'de> Parser<'de> {
 
                 Ok((arguments, end + 1))
             }
+        }
+    }
+
+    fn maybe_semicolon(&mut self) {
+        match self.lexer.peek() {
+            Some(Ok(peek)) if peek.kind == TokenKind::Semicolon => {
+                let _ = self.lexer.next();
+            }
+            _ => {}
         }
     }
 
@@ -367,6 +397,8 @@ impl<'de> Parser<'de> {
                 let rhs = self
                     .parse_expression_within(r_bp)
                     .wrap_err_with(|| format!("on the right-hand side of {op:?}"))?;
+
+                self.maybe_semicolon();
 
                 // return Ok(TokenTree::Cons(op, vec![rhs]));
                 return Ok(TokenTree {
@@ -473,6 +505,8 @@ impl<'de> Parser<'de> {
                     .wrap_err("in variable assignment expression")?;
 
                 // return Ok(TokenTree::Cons(Op::Var, vec![ident, second]));
+
+                self.maybe_semicolon();
 
                 return Ok(TokenTree {
                     range: (offset, second.range.1),
@@ -748,6 +782,8 @@ impl<'de> Parser<'de> {
             }
             break;
         }
+
+        self.maybe_semicolon();
 
         Ok(lhs)
     }
