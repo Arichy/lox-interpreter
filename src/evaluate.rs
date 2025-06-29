@@ -212,6 +212,52 @@ impl<'de> Evaluator<'de> {
                     }
                 }
 
+                Op::EqualEqual | Op::BangEqual => {
+                    let lhs = &operands[0];
+                    let rhs = &operands[1];
+                    let lhs_value = self.evaluate_token_tree(lhs)?;
+                    let rhs_value = self.evaluate_token_tree(rhs)?;
+
+                    match (lhs_value, rhs_value) {
+                        (EvaluateResult::Number(l), EvaluateResult::Number(r)) => {
+                            let result_value = match op {
+                                Op::EqualEqual => l == r,
+                                Op::BangEqual => l != r,
+                                _ => unreachable!("by the outer match arm pattern"),
+                            };
+
+                            EvaluateResult::Bool(result_value)
+                        }
+                        (EvaluateResult::String(l), EvaluateResult::String(r)) => {
+                            let result_value = match op {
+                                Op::EqualEqual => l == r,
+                                Op::BangEqual => l != r,
+                                _ => unreachable!("by the outer match arm pattern"),
+                            };
+
+                            EvaluateResult::Bool(result_value)
+                        }
+
+                        (EvaluateResult::Bool(l), EvaluateResult::Bool(r)) => {
+                            let result_value = match op {
+                                Op::EqualEqual => l == r,
+                                Op::BangEqual => l != r,
+                                _ => unreachable!("by the outer match arm pattern"),
+                            };
+
+                            EvaluateResult::Bool(result_value)
+                        }
+
+                        _ => {
+                            return Err(miette::miette!(
+                                labels = vec![LabeledSpan::at(lhs.range.0..rhs.range.1, "here")],
+                                "{op} can only be used with values in same type",
+                            )
+                            .with_source_code(self.whole.to_string()));
+                        }
+                    }
+                }
+
                 _ => {
                     todo!()
                 }
