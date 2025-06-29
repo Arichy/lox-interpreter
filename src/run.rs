@@ -16,26 +16,42 @@ impl<'de> Runner<'de> {
     }
 
     pub fn run(mut self) -> Result<(), Error> {
-        match self.evaluator.parser.parse() {
-            Ok(statements) => {
-                for statement in statements {
+        loop {
+            let statement = self.evaluator.parser.next();
+            match statement {
+                Some(Ok(statement)) => {
                     self.run_statement(statement)?;
                 }
-
-                Ok(())
-            }
-            Err(err) => {
-                eprintln!("{err:?}");
-                std::process::exit(65);
+                Some(Err(err)) => {
+                    eprintln!("{err:?}");
+                    std::process::exit(65);
+                }
+                None => break,
             }
         }
+
+        Ok(())
     }
 
     pub fn run_statement(&mut self, statement: TokenTree<'de>) -> Result<(), Error> {
-        match statement {
+        match &statement {
             TokenTree { inner, range } => match inner {
                 TokenTreeInner::Atom(atom) => {}
                 TokenTreeInner::Cons(cons, operands) => match cons {
+                    Op::Group
+                    | Op::Minus
+                    | Op::Bang
+                    | Op::Plus
+                    | Op::Star
+                    | Op::Slash
+                    | Op::Greater
+                    | Op::GreaterEqual
+                    | Op::Less
+                    | Op::LessEqual
+                    | Op::EqualEqual
+                    | Op::BangEqual => {
+                        self.evaluator.evaluate_token_tree(&statement)?;
+                    }
                     Op::Print => match operands.first() {
                         Some(operand) => {
                             let value_to_print = self.evaluator.evaluate_token_tree(operand);

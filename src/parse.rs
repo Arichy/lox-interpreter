@@ -1,5 +1,5 @@
 use miette::{Context, Error, LabeledSpan};
-use std::{borrow::Cow, fmt};
+use std::{borrow::Cow, collections::HashMap, fmt};
 
 use crate::{
     lex::{Token, TokenKind},
@@ -1266,3 +1266,42 @@ impl<'de> Parser<'de> {
         Ok(lhs)
     }
 }
+
+impl<'de> Iterator for Parser<'de> {
+    type Item = Result<TokenTree<'de>, Error>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.parse_statement_within(0) {
+            Ok(statement) => {
+                if matches!(
+                    &statement,
+                    TokenTree {
+                        inner: TokenTreeInner::Eof,
+                        ..
+                    }
+                ) {
+                    return None;
+                }
+                Some(Ok(statement))
+            }
+            Err(err) => Some(Err(err)),
+        }
+    }
+}
+
+// #[cfg(test)]
+// mod tests {
+//     use super::*;
+
+//     #[test]
+//     fn basic_parser() {
+//         let input = r#"
+//         96 + "baz";
+//         "#;
+
+//         let mut parser = Parser::new(input);
+
+//         let res = parser.parse();
+//         println!("{res:?}");
+//     }
+// }
