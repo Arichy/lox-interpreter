@@ -32,6 +32,10 @@ impl<'de> RuntimeState<'de> {
         self.stack.last_mut().expect("No stack frame")
     }
 
+    pub fn is_variable_defined(&self, variable: &str) -> bool {
+        self.current_stack_frame().variables.contains_key(variable)
+    }
+
     pub fn get_variable_value(&self, variable: &str) -> Option<&EvaluateResult<'de>> {
         self.current_stack_frame().variables.get(variable)
     }
@@ -96,7 +100,7 @@ impl<'de> Runner<'de> {
                     | Op::BangEqual => {
                         // expression statement, just ignore
                         self.evaluator
-                            .evaluate_token_tree(&statement, Some(&self.state))?;
+                            .evaluate_token_tree(&statement, Some(&mut self.state))?;
                     }
 
                     Op::Print => {
@@ -154,7 +158,7 @@ impl<'de> Runner<'de> {
                                 _ => {
                                     let value_to_print = self
                                         .evaluator
-                                        .evaluate_token_tree(operand, Some(&self.state));
+                                        .evaluate_token_tree(operand, Some(&mut self.state));
 
                                     match value_to_print {
                                         Ok(result) => {
@@ -183,7 +187,7 @@ impl<'de> Runner<'de> {
                             } => {
                                 let init = if let Some(init) = init {
                                     self.evaluator
-                                        .evaluate_token_tree(init, Some(&self.state))?
+                                        .evaluate_token_tree(init, Some(&mut self.state))?
                                 } else {
                                     EvaluateResult::new_nil()
                                 };

@@ -163,7 +163,11 @@ impl<'de> Lexer<'de> {
             .with_source_code(self.whole.to_string())),
             // .wrap_err_with(looking_for_msg)
             Some(Err(e)) => Err(e),
-            None => Err(Eof.into()),
+            None => Err(Eof {
+                src: self.whole.to_string(),
+                err_span: SourceSpan::from(self.byte..self.byte),
+            }
+            .into()),
         }
     }
 

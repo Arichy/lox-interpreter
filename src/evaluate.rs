@@ -10,6 +10,9 @@ use crate::{
     Parser,
 };
 
+/// Represents the result on stack or expression evaluation (temporary value).
+/// Using `Rc` allows us to share the result without copying the data.
+/// So it's cheap to clone
 #[derive(Debug, Clone)]
 pub struct EvaluateResult<'de> {
     inner: Rc<EvaluateResultInner<'de>>,
@@ -90,7 +93,7 @@ impl<'de> Evaluator<'de> {
     pub fn evaluate_token_tree<'rt>(
         &self,
         token_tree: &TokenTree<'de>,
-        state: Option<&RuntimeState<'de>>,
+        mut state: Option<&'rt mut RuntimeState<'de>>,
     ) -> Result<EvaluateResult<'de>, Error> {
         let evaluate_result: EvaluateResult<'de> = match &token_tree.inner {
             TokenTreeInner::Atom(atom) => match atom {
@@ -176,8 +179,17 @@ impl<'de> Evaluator<'de> {
                 Op::Plus => {
                     let lhs = &operands[0];
                     let rhs = &operands[1];
-                    let lhs_value = self.evaluate_token_tree(lhs, state)?;
-                    let rhs_value = self.evaluate_token_tree(rhs, state)?;
+                    let (lhs_value, rhs_value) = if let Some(state) = state {
+                        (
+                            self.evaluate_token_tree(lhs, Some(state))?,
+                            self.evaluate_token_tree(rhs, Some(state))?,
+                        )
+                    } else {
+                        (
+                            self.evaluate_token_tree(lhs, None)?,
+                            self.evaluate_token_tree(rhs, None)?,
+                        )
+                    };
 
                     match (&*lhs_value.inner, &*rhs_value) {
                         (
@@ -205,8 +217,18 @@ impl<'de> Evaluator<'de> {
                 Op::Minus | Op::Star | Op::Slash => {
                     let lhs = &operands[0];
                     let rhs = &operands[1];
-                    let lhs_value = self.evaluate_token_tree(lhs, state)?;
-                    let rhs_value = self.evaluate_token_tree(rhs, state)?;
+
+                    let (lhs_value, rhs_value) = if let Some(state) = state {
+                        (
+                            self.evaluate_token_tree(lhs, Some(state))?,
+                            self.evaluate_token_tree(rhs, Some(state))?,
+                        )
+                    } else {
+                        (
+                            self.evaluate_token_tree(lhs, None)?,
+                            self.evaluate_token_tree(rhs, None)?,
+                        )
+                    };
 
                     if let EvaluateResultInner::Number(left_num) = &*lhs_value {
                         if let EvaluateResultInner::Number(right_num) = &*rhs_value {
@@ -242,8 +264,19 @@ impl<'de> Evaluator<'de> {
                 Op::Greater | Op::GreaterEqual | Op::Less | Op::LessEqual => {
                     let lhs = &operands[0];
                     let rhs = &operands[1];
-                    let lhs_value = self.evaluate_token_tree(lhs, state)?;
-                    let rhs_value = self.evaluate_token_tree(rhs, state)?;
+                    // let lhs_value = self.evaluate_token_tree(lhs, state)?;
+                    // let rhs_value = self.evaluate_token_tree(rhs, state)?;
+                    let (lhs_value, rhs_value) = if let Some(state) = state {
+                        (
+                            self.evaluate_token_tree(lhs, Some(state))?,
+                            self.evaluate_token_tree(rhs, Some(state))?,
+                        )
+                    } else {
+                        (
+                            self.evaluate_token_tree(lhs, None)?,
+                            self.evaluate_token_tree(rhs, None)?,
+                        )
+                    };
 
                     match (&*lhs_value, &*rhs_value) {
                         (EvaluateResultInner::Number(l), EvaluateResultInner::Number(r)) => {
@@ -272,8 +305,19 @@ impl<'de> Evaluator<'de> {
                 Op::EqualEqual | Op::BangEqual => {
                     let lhs = &operands[0];
                     let rhs = &operands[1];
-                    let lhs_value = self.evaluate_token_tree(lhs, state)?;
-                    let rhs_value = self.evaluate_token_tree(rhs, state)?;
+                    // let lhs_value = self.evaluate_token_tree(lhs, state)?;
+                    // let rhs_value = self.evaluate_token_tree(rhs, state)?;
+                    let (lhs_value, rhs_value) = if let Some(state) = state {
+                        (
+                            self.evaluate_token_tree(lhs, Some(state))?,
+                            self.evaluate_token_tree(rhs, Some(state))?,
+                        )
+                    } else {
+                        (
+                            self.evaluate_token_tree(lhs, None)?,
+                            self.evaluate_token_tree(rhs, None)?,
+                        )
+                    };
 
                     match (&*lhs_value, &*rhs_value) {
                         (EvaluateResultInner::Number(l), EvaluateResultInner::Number(r)) => {
@@ -307,6 +351,46 @@ impl<'de> Evaluator<'de> {
 
                         _ => EvaluateResult::new_bool(false),
                     }
+                }
+
+                Op::Equal => {
+                    let ident = match &operands[0].inner {
+                        TokenTreeInner::Atom(Atom::Ident(ident)) => ident,
+                        _ => {
+                            return Err(error::SyntaxError {
+                                src: self.whole.to_string(),
+                                message: format!("= must be followed by an identifier"),
+                                err_span: (operands[0].range.0..operands[0].range.1).into(),
+                            }
+                            .into());
+                        }
+                    };
+
+                    let value = if let Some(state) = state {
+                        let value = self.evaluate_token_tree(&operands[1], Some(state))?;
+
+                        if state.is_variable_defined(ident) {
+                            state.set_variable_value(ident, value.clone());
+                        } else {
+                            return Err(error::RuntimeError::ReferenceError {
+                                src: self.whole.to_string(),
+                                ident: ident.to_string(),
+                                err_span: (operands[0].range.0..operands[0].range.1).into(),
+                            }
+                            .into());
+                        }
+
+                        value
+                    } else {
+                        return Err(error::UnexpectedTokenTree {
+                            src: self.whole.to_string(),
+                            token_tree: token_tree.clone().into(),
+                            err_span: (token_tree.range.0..token_tree.range.1).into(),
+                        }
+                        .into());
+                    };
+
+                    value
                 }
 
                 _ => {

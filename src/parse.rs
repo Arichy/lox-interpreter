@@ -2,6 +2,7 @@ use miette::{Context, Error, LabeledSpan};
 use std::{borrow::Cow, collections::HashMap, fmt};
 
 use crate::{
+    error,
     lex::{Token, TokenKind},
     Lexer,
 };
@@ -19,20 +20,33 @@ use crate::{
 /// and are typically one level higher to enforce left-associativity
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum BindingPower {
-    None = 0,        // Base level (no binding power)
+    None = 0, // Base level (no binding power)
+
     SpecialCall = 1, // return and print statements
-    LogicalOr = 3,   // Logical OR operator (||)
-    LogicalOrRight = 4,
-    Comparison = 5, // Comparison operators (==, !=, <, >, <=, >=)
-    ComparisonRight = 6,
-    Term = 7, // Additive operators (+, -)
-    TermRight = 8,
-    Factor = 9, // Multiplicative operators (*, /)
-    FactorRight = 10,
-    Unary = 11,        // Unary operators (-, !)
-    Call = 13,         // Function calls
-    MemberAccess = 15, // Member/field access (.)
-    MemberAccessRight = 16,
+
+    // assignment should be expression
+    // since it's right-associative, the right side should have higher precedence
+    AssignmentLeft = 3,
+    AssignmentRight = 2,
+
+    LogicalOr = 4, // Logical OR operator (||)
+    LogicalOrRight = 5,
+
+    Comparison = 6, // Comparison operators (==, !=, <, >, <=, >=)
+    ComparisonRight = 7,
+
+    Term = 8, // Additive operators (+, -)
+    TermRight = 9,
+
+    Factor = 10, // Multiplicative operators (*, /)
+    FactorRight = 11,
+
+    Unary = 12, // Unary operators (-, !)
+
+    Call = 14, // Function calls
+
+    MemberAccess = 16, // Member/field access (.)
+    MemberAccessRight = 17,
 }
 
 impl BindingPower {
@@ -43,6 +57,8 @@ impl BindingPower {
         match self {
             BindingPower::None => BindingPower::SpecialCall,
             BindingPower::SpecialCall => BindingPower::LogicalOr, // Special calls have low precedence
+            BindingPower::AssignmentLeft => BindingPower::LogicalOr,
+            BindingPower::AssignmentRight => BindingPower::AssignmentRight,
             BindingPower::LogicalOr => BindingPower::LogicalOrRight,
             BindingPower::LogicalOrRight => BindingPower::Comparison,
             BindingPower::Comparison => BindingPower::ComparisonRight,
@@ -116,6 +132,7 @@ pub enum Op {
     Bang,
     And,
     Or,
+    Equal,
     Call,
     For,
     Class,
@@ -147,6 +164,7 @@ impl fmt::Display for Op {
                 Op::And => "and",
                 Op::Or => "or",
                 Op::Call => "call",
+                Op::Equal => "=",
                 Op::For => "for",
                 Op::Class => "class",
                 Op::Print => "print",
@@ -274,6 +292,11 @@ fn infix_binding_power(op: Op) -> Option<(BindingPower, BindingPower)> {
         // Member access (highest precedence)
         Op::Field => (BindingPower::MemberAccessRight, BindingPower::MemberAccess),
 
+        Op::Equal => {
+            // Assignment operator
+            (BindingPower::AssignmentLeft, BindingPower::AssignmentRight)
+        }
+
         _ => return None,
     };
     Some(res)
@@ -310,7 +333,6 @@ impl<'de> Parser<'de> {
                     }
                 }
                 Err(err) => {
-                    crate::log_stderr!("{err:?}");
                     return Err(err);
                 }
             }
@@ -962,16 +984,19 @@ impl<'de> Parser<'de> {
                     offset,
                     ..
                 }) => (Op::Or, offset),
+                Some(Token {
+                    kind: TokenKind::Equal,
+                    offset,
+                    ..
+                }) => (Op::Equal, offset),
+
                 Some(token) => {
-                    return Err(miette::miette!(
-                        labels = vec![LabeledSpan::at(
-                            token.offset..token.offset + token.origin.len(),
-                            "here"
-                        )],
-                        help = format!("Unexpected {token:?}"),
-                        "Expected an infix operator"
-                    )
-                    .with_source_code(self.whole.to_string()))
+                    return Err(error::SyntaxError {
+                        src: self.whole.to_string(),
+                        message: format!("Expected an infix operator, found {}", token.origin),
+                        err_span: (token.offset..token.offset + token.origin.len()).into(),
+                    }
+                    .into());
                 }
             };
 
@@ -1020,6 +1045,14 @@ impl<'de> Parser<'de> {
                     .parse_expression_within(r_bp)
                     .wrap_err_with(|| format!("on the right-hand side of {lhs} {op}"))?;
                 // lhs = TokenTree::Cons(op, vec![lhs, rhs]);
+
+                if matches!(rhs.inner, TokenTreeInner::Eof) {
+                    return Err(error::Eof {
+                        src: self.whole.to_string(),
+                        err_span: (rhs.range.0 - 1..rhs.range.0 - 1).into(),
+                    }
+                    .into());
+                }
 
                 lhs = TokenTree {
                     range: (lhs.range.0, rhs.range.1),
@@ -1273,16 +1306,18 @@ impl<'de> Parser<'de> {
                     offset,
                     ..
                 }) => (Op::Or, offset),
+                Some(Token {
+                    kind: TokenKind::Equal,
+                    offset,
+                    ..
+                }) => (Op::Equal, offset),
                 Some(token) => {
-                    return Err(miette::miette!(
-                        labels = vec![LabeledSpan::at(
-                            token.offset..token.offset + token.origin.len(),
-                            "here"
-                        )],
-                        help = format!("Unexpected {token:?}"),
-                        "Expected an infix operator"
-                    )
-                    .with_source_code(self.whole.to_string()))
+                    return Err(error::SyntaxError {
+                        src: self.whole.to_string(),
+                        message: format!("Expected an infix operator, found {}", token.origin),
+                        err_span: (token.offset..token.offset + token.origin.len()).into(),
+                    }
+                    .into());
                 }
             };
 
@@ -1331,6 +1366,16 @@ impl<'de> Parser<'de> {
                         let rhs = self
                             .parse_expression_within(r_bp)
                             .wrap_err_with(|| format!("on the right-hand side of {lhs} {op}"))?;
+
+                        if matches!(rhs.inner, TokenTreeInner::Eof) {
+                            return Err(miette::miette!(
+                                labels = vec![LabeledSpan::at(rhs.range.0..rhs.range.1, "here")],
+                                help = format!("Unexpected end of input after {lhs} {op}"),
+                                "Expected an expression"
+                            )
+                            .with_source_code(self.whole.to_string()));
+                        }
+
                         // TokenTree::Cons(op, vec![lhs, rhs])
                         TokenTree {
                             range: (lhs.range.0, rhs.range.1),

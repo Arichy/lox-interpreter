@@ -10,7 +10,13 @@ pub mod owned;
 
 #[derive(Diagnostic, Debug, Error)]
 #[error("Unexpected EOF")]
-pub struct Eof;
+pub struct Eof {
+    #[source_code]
+    pub src: String,
+
+    #[label = "unexpected EOF"]
+    pub err_span: SourceSpan,
+}
 
 #[derive(Diagnostic, Debug, Error)]
 #[error("Unexpected token: '{token}' in input")]
@@ -59,14 +65,14 @@ pub struct SyntaxError {
 }
 
 #[derive(Diagnostic, Debug, Error)]
-#[error("Unterminated string")]
+#[error("Unexpected token tree")]
 pub struct UnexpectedTokenTree {
     #[source_code]
     pub src: String,
 
     pub token_tree: OwnedTokenTree,
 
-    #[label = "this string literal"]
+    #[label]
     pub err_span: SourceSpan,
 }
 
