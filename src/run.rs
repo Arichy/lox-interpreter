@@ -97,7 +97,8 @@ impl<'de> Runner<'de> {
                     | Op::Less
                     | Op::LessEqual
                     | Op::EqualEqual
-                    | Op::BangEqual => {
+                    | Op::BangEqual
+                    | Op::Equal => {
                         // expression statement, just ignore
                         self.evaluator
                             .evaluate_token_tree(&statement, Some(&mut self.state))?;
