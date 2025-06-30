@@ -62,7 +62,7 @@ impl<'de> Runner<'de> {
                     self.run_statement(statement)?;
                 }
                 Some(Err(err)) => {
-                    eprintln!("{err:?}");
+                    crate::log_stderr!("{err:?}");
                     std::process::exit(65);
                 }
                 None => break,
@@ -97,16 +97,16 @@ impl<'de> Runner<'de> {
                     Op::Print => {
                         let print_value = |value: &EvaluateResult<'de>| match &**value {
                             EvaluateResultInner::Bool(b) => {
-                                println!("{}", b);
+                                crate::log_stdout!("{}", b);
                             }
                             EvaluateResultInner::Number(n) => {
-                                println!("{}", n);
+                                crate::log_stdout!("{}", n);
                             }
                             EvaluateResultInner::String(s) => {
-                                println!("{}", s);
+                                crate::log_stdout!("{}", s);
                             }
                             EvaluateResultInner::Nil => {
-                                println!("nil");
+                                crate::log_stdout!("nil");
                             }
                         };
 

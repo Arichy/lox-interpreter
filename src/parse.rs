@@ -245,7 +245,7 @@ impl<'de> Parser<'de> {
                     }
                 }
                 Err(err) => {
-                    eprintln!("{err:?}");
+                    crate::log_stderr!("{err:?}");
                     return Err(err);
                 }
             }

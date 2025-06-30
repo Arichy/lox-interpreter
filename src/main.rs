@@ -42,11 +42,12 @@ fn main() -> miette::Result<()> {
                 let token = match token {
                     Ok(token) => token,
                     Err(e) => {
-                        eprintln!("{e:?}");
-                        if let Some(unrecognized) = e.downcast_ref::<imp::error::SingleTokenError>() {
+                        imp::log_stderr!("{e:?}");
+                        if let Some(unrecognized) = e.downcast_ref::<imp::error::SingleTokenError>()
+                        {
                             any_cc_error = true;
 
-                            eprintln!(
+                            imp::log_stderr!(
                                 "[line {}] Error: Unexpected character: {}",
                                 unrecognized.line(),
                                 unrecognized.token
@@ -55,14 +56,17 @@ fn main() -> miette::Result<()> {
                             e.downcast_ref::<imp::error::StringTerminationError>()
                         {
                             any_cc_error = true;
-                            eprintln!("[line {}] Error: Unterminated string.", unterminated.line(),);
+                            imp::log_stderr!(
+                                "[line {}] Error: Unterminated string.",
+                                unterminated.line(),
+                            );
                         }
                         continue;
                     }
                 };
-                println!("{token}");
+                imp::log_stdout!("{token}");
             }
-            println!("EOF  null");
+            imp::log_stdout!("EOF  null");
 
             if any_cc_error {
                 std::process::exit(65);
@@ -79,12 +83,12 @@ fn main() -> miette::Result<()> {
             match parser.parse() {
                 Ok(tt_list) => {
                     for tt in tt_list {
-                        println!("{tt}")
+                        imp::log_stdout!("{tt}")
                     }
                 }
                 Err(e) => {
                     // TODO: match error line format
-                    eprintln!("{e:?}");
+                    imp::log_stderr!("{e:?}");
                     std::process::exit(65);
                 }
             }
@@ -99,10 +103,10 @@ fn main() -> miette::Result<()> {
 
             match evaluator.evaluate_expression() {
                 Ok(evaluate_result) => {
-                    println!("{evaluate_result}");
+                    imp::log_stdout!("{evaluate_result}");
                 }
                 Err(e) => {
-                    eprintln!("{e:?}");
+                    imp::log_stderr!("{e:?}");
                     std::process::exit(70);
                 }
             }
@@ -116,7 +120,7 @@ fn main() -> miette::Result<()> {
             let runner = imp::run::Runner::new(&file_contents);
 
             if let Err(e) = runner.run() {
-                eprintln!("{e:?}");
+                imp::log_stderr!("{e:?}");
                 std::process::exit(70);
             }
         }
