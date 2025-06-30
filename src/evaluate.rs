@@ -169,7 +169,7 @@ impl<'de> Evaluator<'de> {
 
                     match &*rest {
                         EvaluateResultInner::Bool(boolean) => EvaluateResult::new_bool(!boolean),
-                        EvaluateResultInner::Nil => EvaluateResult::new_bool(false),
+                        EvaluateResultInner::Nil => EvaluateResult::new_bool(true),
                         _ => EvaluateResult::new_bool(!true),
                     }
                 }
