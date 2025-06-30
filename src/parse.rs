@@ -20,7 +20,7 @@ pub enum Atom<'de> {
     Number(f64),
     Nil,
     Bool(bool),
-    Ident(&'de str),
+    Ident(Cow<'de, str>),
     Super,
     This,
 }
@@ -381,7 +381,7 @@ impl<'de> Parser<'de> {
                 origin,
                 offset,
             } => TokenTree {
-                inner: TokenTreeInner::Atom(Atom::Ident(origin)),
+                inner: TokenTreeInner::Atom(Atom::Ident(Cow::Borrowed(origin))),
                 range: (offset, offset + origin.len()),
             },
             Token {
@@ -585,8 +585,8 @@ impl<'de> Parser<'de> {
                 assert_eq!(token.kind, TokenKind::Ident);
 
                 // let ident = TokenTree::Atom(Atom::Ident(token.origin));
-                let ident = TokenTree {
-                    inner: TokenTreeInner::Atom(Atom::Ident(token.origin)),
+                let ident: TokenTree<'de> = TokenTree {
+                    inner: TokenTreeInner::Atom(Atom::Ident(Cow::Borrowed(token.origin))),
                     range: (token.offset, token.offset + token.origin.len()),
                 };
 
@@ -621,7 +621,7 @@ impl<'de> Parser<'de> {
 
                 // let ident = TokenTree::Atom(Atom::Ident(token.origin));
                 let ident = TokenTree {
-                    inner: TokenTreeInner::Atom(Atom::Ident(token.origin)),
+                    inner: TokenTreeInner::Atom(Atom::Ident(Cow::Borrowed(token.origin))),
                     range: (token.offset, token.offset + token.origin.len()),
                 };
 
@@ -647,7 +647,7 @@ impl<'de> Parser<'de> {
                     .wrap_err("in function name declaration")?;
                 assert_eq!(token.kind, TokenKind::Ident);
                 let name = token.origin;
-                let ident = Atom::Ident(token.origin);
+                let ident = Atom::Ident(Cow::Borrowed(token.origin));
 
                 let mut parameters = Vec::new();
 
@@ -1018,7 +1018,7 @@ impl<'de> Parser<'de> {
                 origin,
                 offset,
             } => TokenTree {
-                inner: TokenTreeInner::Atom(Atom::Ident(origin)),
+                inner: TokenTreeInner::Atom(Atom::Ident(Cow::Borrowed(origin))),
                 range: (offset, offset + origin.len()),
             },
             Token {

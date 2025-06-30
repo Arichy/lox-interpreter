@@ -43,7 +43,7 @@ fn main() -> miette::Result<()> {
                     Ok(token) => token,
                     Err(e) => {
                         eprintln!("{e:?}");
-                        if let Some(unrecognized) = e.downcast_ref::<imp::lex::SingleTokenError>() {
+                        if let Some(unrecognized) = e.downcast_ref::<imp::error::SingleTokenError>() {
                             any_cc_error = true;
 
                             eprintln!(
@@ -52,7 +52,7 @@ fn main() -> miette::Result<()> {
                                 unrecognized.token
                             );
                         } else if let Some(unterminated) =
-                            e.downcast_ref::<imp::lex::StringTerminationError>()
+                            e.downcast_ref::<imp::error::StringTerminationError>()
                         {
                             any_cc_error = true;
                             eprintln!("[line {}] Error: Unterminated string.", unterminated.line(),);

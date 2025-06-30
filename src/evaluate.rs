@@ -1,34 +1,76 @@
 use core::fmt;
-use std::borrow::Cow;
+use std::{borrow::Cow, ops::Deref, rc::Rc};
 
-use miette::{Error, LabeledSpan};
+use miette::{Error, LabeledSpan, SourceSpan};
 
 use crate::{
+    error,
     parse::{Atom, Op, TokenTree, TokenTreeInner},
+    run::RuntimeState,
     Parser,
 };
 
-pub struct Evaluator<'de> {
-    whole: &'de str,
-    pub parser: Parser<'de>,
+#[derive(Debug, Clone)]
+pub struct EvaluateResult<'de> {
+    inner: Rc<EvaluateResultInner<'de>>,
 }
 
-pub enum EvaluateResult<'de> {
+#[derive(Debug, Clone)]
+pub enum EvaluateResultInner<'de> {
     String(Cow<'de, str>),
     Number(f64),
     Nil,
     Bool(bool),
 }
 
-impl fmt::Display for EvaluateResult<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            EvaluateResult::Bool(boolean) => write!(f, "{}", boolean),
-            EvaluateResult::Nil => write!(f, "nil"),
-            EvaluateResult::Number(num) => write!(f, "{}", num),
-            EvaluateResult::String(string) => write!(f, "{}", string),
+impl<'de> EvaluateResult<'de> {
+    pub fn new_string(string: Cow<'de, str>) -> Self {
+        Self {
+            inner: Rc::new(EvaluateResultInner::String(string)),
         }
     }
+
+    pub fn new_number(num: f64) -> Self {
+        Self {
+            inner: Rc::new(EvaluateResultInner::Number(num)),
+        }
+    }
+
+    pub fn new_nil() -> Self {
+        Self {
+            inner: Rc::new(EvaluateResultInner::Nil),
+        }
+    }
+
+    pub fn new_bool(boolean: bool) -> Self {
+        Self {
+            inner: Rc::new(EvaluateResultInner::Bool(boolean)),
+        }
+    }
+}
+
+impl fmt::Display for EvaluateResult<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &**self {
+            EvaluateResultInner::Bool(boolean) => write!(f, "{}", boolean),
+            EvaluateResultInner::Nil => write!(f, "nil"),
+            EvaluateResultInner::Number(num) => write!(f, "{}", num),
+            EvaluateResultInner::String(string) => write!(f, "{}", string),
+        }
+    }
+}
+
+impl<'de> Deref for EvaluateResult<'de> {
+    type Target = EvaluateResultInner<'de>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+pub struct Evaluator<'de> {
+    pub whole: &'de str,
+    pub parser: Parser<'de>,
 }
 
 impl<'de> Evaluator<'de> {
@@ -42,111 +84,120 @@ impl<'de> Evaluator<'de> {
     pub fn evaluate_expression(mut self) -> Result<EvaluateResult<'de>, Error> {
         let parser = std::mem::take(&mut self.parser);
         let token_tree = parser.parse_expression()?;
-        self.evaluate_token_tree(&token_tree)
+        self.evaluate_token_tree(&token_tree, None)
     }
 
-    pub fn evaluate_token_tree(
+    pub fn evaluate_token_tree<'rt>(
         &self,
         token_tree: &TokenTree<'de>,
+        state: Option<&RuntimeState<'de>>,
     ) -> Result<EvaluateResult<'de>, Error> {
-        let evaluate_result = match &token_tree.inner {
+        let evaluate_result: EvaluateResult<'de> = match &token_tree.inner {
             TokenTreeInner::Atom(atom) => match atom {
-                Atom::String(string) => EvaluateResult::String(string.clone()),
-                Atom::Number(num) => EvaluateResult::Number(*num),
-                Atom::Nil => EvaluateResult::Nil,
-                Atom::Bool(boolean) => EvaluateResult::Bool(*boolean),
+                Atom::String(string) => EvaluateResult::new_string(string.clone()),
+
+                Atom::Number(num) => EvaluateResult::new_number(*num),
+
+                Atom::Nil => EvaluateResult::new_nil(),
+
+                Atom::Bool(boolean) => EvaluateResult::new_bool(*boolean),
+
                 Atom::Ident(ident) => {
-                    return Err(miette::miette!(
-                        labels = vec![LabeledSpan::at(
-                            token_tree.range.0..token_tree.range.1,
-                            "here"
-                        )],
-                        help = format!("Unexpected {ident}"),
-                        "Unexpected Ident",
-                    )
-                    .with_source_code(self.whole.to_string()))
+                    if let Some(state) = state {
+                        if let Some(ident_value) = state.get_variable_value(ident) {
+                            ident_value.clone()
+                        } else {
+                            return Err(error::RuntimeError::ReferenceError {
+                                src: self.whole.to_string(),
+                                ident: ident.to_string(),
+                                err_span: (token_tree.range.0..token_tree.range.1).into(),
+                            }
+                            .into());
+                        }
+                    } else {
+                        return Err(error::UnexpectedTokenTree {
+                            src: self.whole.to_string(),
+                            token_tree: token_tree.clone().into(),
+                            err_span: (token_tree.range.0..token_tree.range.1).into(),
+                        }
+                        .into());
+                    }
                 }
                 Atom::Super => {
-                    return Err(miette::miette!(
-                        labels = vec![LabeledSpan::at(
-                            token_tree.range.0..token_tree.range.1,
-                            "here"
-                        )],
-                        "Unexpected this",
-                    )
-                    .with_source_code(self.whole.to_string()))
+                    return Err(error::SyntaxError {
+                        src: self.whole.to_string(),
+                        message: format!("invalid use of keyword super"),
+                        err_span: (token_tree.range.0..token_tree.range.1).into(),
+                    }
+                    .into());
                 }
                 Atom::This => {
-                    return Err(miette::miette!(
-                        labels = vec![LabeledSpan::at(
-                            token_tree.range.0..token_tree.range.1,
-                            "here"
-                        )],
-                        "Unexpected this",
-                    )
-                    .with_source_code(self.whole.to_string()))
+                    todo!()
                 }
             },
 
             TokenTreeInner::Cons(op, operands) => match op {
-                Op::Group => {
-                    self.evaluate_token_tree(operands.first().expect("Group must not be empty."))?
-                }
+                Op::Group => self.evaluate_token_tree(
+                    operands.first().expect("Group must not be empty."),
+                    state,
+                )?,
 
                 Op::Minus if operands.len() == 1 => {
                     let rest = self.evaluate_token_tree(
                         operands.first().expect("- must be followed by a number."),
+                        state,
                     )?;
-                    if let EvaluateResult::Number(num) = rest {
-                        EvaluateResult::Number(-num)
+
+                    if let EvaluateResultInner::Number(num) = &*rest {
+                        EvaluateResult::new_number(-num)
                     } else {
-                        return Err(miette::miette!(
-                            labels = vec![LabeledSpan::at(
-                                token_tree.range.0..token_tree.range.1,
-                                "here"
-                            )],
-                            "Operand must be a number",
-                        )
-                        .with_source_code(self.whole.to_string()));
+                        return Err(error::RuntimeError::BadOperandError {
+                            src: self.whole.to_string(),
+                            operator: op.to_string(),
+                            reason: "operands must be numbers".to_string(),
+                            err_span: (token_tree.range.0..token_tree.range.1).into(),
+                        }
+                        .into());
                     }
                 }
 
                 Op::Bang => {
                     let rest = self.evaluate_token_tree(
                         operands.first().expect("! must be followed by a bool."),
+                        state,
                     )?;
 
-                    match rest {
-                        EvaluateResult::Bool(boolean) => EvaluateResult::Bool(!boolean),
-                        EvaluateResult::Nil => EvaluateResult::Bool(!false),
-                        _ => EvaluateResult::Bool(!true),
+                    match &*rest {
+                        EvaluateResultInner::Bool(boolean) => EvaluateResult::new_bool(!boolean),
+                        EvaluateResultInner::Nil => EvaluateResult::new_bool(false),
+                        _ => EvaluateResult::new_bool(!true),
                     }
                 }
                 Op::Plus => {
                     let lhs = &operands[0];
                     let rhs = &operands[1];
-                    let lhs_value = self.evaluate_token_tree(lhs)?;
-                    let rhs_value = self.evaluate_token_tree(rhs)?;
+                    let lhs_value = self.evaluate_token_tree(lhs, state)?;
+                    let rhs_value = self.evaluate_token_tree(rhs, state)?;
 
-                    match (lhs_value, rhs_value) {
-                        (EvaluateResult::Number(left_num), EvaluateResult::Number(right_num)) => {
-                            EvaluateResult::Number(left_num + right_num)
-                        }
+                    match (&*lhs_value.inner, &*rhs_value) {
+                        (
+                            EvaluateResultInner::Number(left_num),
+                            EvaluateResultInner::Number(right_num),
+                        ) => EvaluateResult::new_number(left_num + right_num),
 
                         (
-                            EvaluateResult::String(left_string),
-                            EvaluateResult::String(right_string),
-                        ) => EvaluateResult::String(left_string + right_string),
+                            EvaluateResultInner::String(left_string),
+                            EvaluateResultInner::String(right_string),
+                        ) => EvaluateResult::new_string(left_string.clone() + right_string.clone()),
 
                         _ => {
-                            return Err(miette::miette!(
-                                labels = vec![
-                                    LabeledSpan::at(lhs.range.0..lhs.range.1, "lhs"),
-                                    LabeledSpan::at(rhs.range.0..rhs.range.1, "rhs")
-                                ],
-                                "{op} can only be used with two numbers or two strings",
-                            )
-                            .with_source_code(self.whole.to_string()));
+                            return Err(error::RuntimeError::BadOperandError {
+                                src: self.whole.to_string(),
+                                operator: op.to_string(),
+                                reason: "operands must be both numbers or strings".to_string(),
+                                err_span: (lhs.range.0..rhs.range.1).into(),
+                            }
+                            .into());
                         }
                     }
                 }
@@ -154,11 +205,11 @@ impl<'de> Evaluator<'de> {
                 Op::Minus | Op::Star | Op::Slash => {
                     let lhs = &operands[0];
                     let rhs = &operands[1];
-                    let lhs_value = self.evaluate_token_tree(lhs)?;
-                    let rhs_value = self.evaluate_token_tree(rhs)?;
+                    let lhs_value = self.evaluate_token_tree(lhs, state)?;
+                    let rhs_value = self.evaluate_token_tree(rhs, state)?;
 
-                    if let EvaluateResult::Number(left_num) = lhs_value {
-                        if let EvaluateResult::Number(right_num) = rhs_value {
+                    if let EvaluateResultInner::Number(left_num) = &*lhs_value {
+                        if let EvaluateResultInner::Number(right_num) = &*rhs_value {
                             let result_num = match op {
                                 Op::Plus => left_num + right_num,
                                 Op::Minus => left_num - right_num,
@@ -167,31 +218,35 @@ impl<'de> Evaluator<'de> {
                                 _ => unreachable!("by the outer match arm pattern"),
                             };
 
-                            EvaluateResult::Number(result_num)
+                            EvaluateResult::new_number(result_num)
                         } else {
-                            return Err(miette::miette!(
-                                labels = vec![LabeledSpan::at(rhs.range.0..rhs.range.1, "here")],
-                                "{op} can only be used with numbers",
-                            )
-                            .with_source_code(self.whole.to_string()));
+                            return Err(error::RuntimeError::BadOperandError {
+                                src: self.whole.to_string(),
+                                operator: op.to_string(),
+                                reason: "can only be used with numbers".to_string(),
+                                err_span: (rhs.range.0..rhs.range.1).into(),
+                            }
+                            .into());
                         }
                     } else {
-                        return Err(miette::miette!(
-                            labels = vec![LabeledSpan::at(lhs.range.0..lhs.range.1, "here")],
-                            "{op} can only be used with numbers",
-                        )
-                        .with_source_code(self.whole.to_string()));
+                        return Err(error::RuntimeError::BadOperandError {
+                            src: self.whole.to_string(),
+                            operator: op.to_string(),
+                            reason: "can only be used with numbers".to_string(),
+                            err_span: (rhs.range.0..rhs.range.1).into(),
+                        }
+                        .into());
                     }
                 }
 
                 Op::Greater | Op::GreaterEqual | Op::Less | Op::LessEqual => {
                     let lhs = &operands[0];
                     let rhs = &operands[1];
-                    let lhs_value = self.evaluate_token_tree(lhs)?;
-                    let rhs_value = self.evaluate_token_tree(rhs)?;
+                    let lhs_value = self.evaluate_token_tree(lhs, state)?;
+                    let rhs_value = self.evaluate_token_tree(rhs, state)?;
 
-                    match (lhs_value, rhs_value) {
-                        (EvaluateResult::Number(l), EvaluateResult::Number(r)) => {
+                    match (&*lhs_value, &*rhs_value) {
+                        (EvaluateResultInner::Number(l), EvaluateResultInner::Number(r)) => {
                             let result_value = match op {
                                 Op::Greater => l > r,
                                 Op::GreaterEqual => l >= r,
@@ -200,14 +255,16 @@ impl<'de> Evaluator<'de> {
                                 _ => unreachable!("by the outer match arm pattern"),
                             };
 
-                            EvaluateResult::Bool(result_value)
+                            EvaluateResult::new_bool(result_value)
                         }
                         _ => {
-                            return Err(miette::miette!(
-                                labels = vec![LabeledSpan::at(lhs.range.0..rhs.range.1, "here")],
-                                "{op} can only be used with numbers",
-                            )
-                            .with_source_code(self.whole.to_string()));
+                            return Err(error::RuntimeError::BadOperandError {
+                                src: self.whole.to_string(),
+                                operator: op.to_string(),
+                                reason: "can only be used with numbers".to_string(),
+                                err_span: (rhs.range.0..rhs.range.1).into(),
+                            }
+                            .into());
                         }
                     }
                 }
@@ -215,40 +272,40 @@ impl<'de> Evaluator<'de> {
                 Op::EqualEqual | Op::BangEqual => {
                     let lhs = &operands[0];
                     let rhs = &operands[1];
-                    let lhs_value = self.evaluate_token_tree(lhs)?;
-                    let rhs_value = self.evaluate_token_tree(rhs)?;
+                    let lhs_value = self.evaluate_token_tree(lhs, state)?;
+                    let rhs_value = self.evaluate_token_tree(rhs, state)?;
 
-                    match (lhs_value, rhs_value) {
-                        (EvaluateResult::Number(l), EvaluateResult::Number(r)) => {
+                    match (&*lhs_value, &*rhs_value) {
+                        (EvaluateResultInner::Number(l), EvaluateResultInner::Number(r)) => {
                             let result_value = match op {
                                 Op::EqualEqual => l == r,
                                 Op::BangEqual => l != r,
                                 _ => unreachable!("by the outer match arm pattern"),
                             };
 
-                            EvaluateResult::Bool(result_value)
+                            EvaluateResult::new_bool(result_value)
                         }
-                        (EvaluateResult::String(l), EvaluateResult::String(r)) => {
+                        (EvaluateResultInner::String(l), EvaluateResultInner::String(r)) => {
                             let result_value = match op {
                                 Op::EqualEqual => l == r,
                                 Op::BangEqual => l != r,
                                 _ => unreachable!("by the outer match arm pattern"),
                             };
 
-                            EvaluateResult::Bool(result_value)
+                            EvaluateResult::new_bool(result_value)
                         }
 
-                        (EvaluateResult::Bool(l), EvaluateResult::Bool(r)) => {
+                        (EvaluateResultInner::Bool(l), EvaluateResultInner::Bool(r)) => {
                             let result_value = match op {
                                 Op::EqualEqual => l == r,
                                 Op::BangEqual => l != r,
                                 _ => unreachable!("by the outer match arm pattern"),
                             };
 
-                            EvaluateResult::Bool(result_value)
+                            EvaluateResult::new_bool(result_value)
                         }
 
-                        _ => EvaluateResult::Bool(false),
+                        _ => EvaluateResult::new_bool(false),
                     }
                 }
 

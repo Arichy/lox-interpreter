@@ -9,3 +9,5 @@ pub use parse::Parser;
 pub mod evaluate;
 
 pub mod run;
+
+pub mod error;

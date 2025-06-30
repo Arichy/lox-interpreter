@@ -1,18 +1,57 @@
+use std::collections::HashMap;
+
 use miette::{miette, Error, LabeledSpan};
 
 use crate::{
-    evaluate::{EvaluateResult, Evaluator},
-    parse::{Op, TokenTree, TokenTreeInner},
+    evaluate::{EvaluateResult, EvaluateResultInner, Evaluator},
+    parse::{Atom, Op, TokenTree, TokenTreeInner},
 };
+#[derive(Debug, Default)]
+pub struct StackFrame<'de> {
+    variables: HashMap<String, EvaluateResult<'de>>,
+}
+
+#[derive(Debug, Default)]
+pub struct RuntimeState<'de> {
+    stack: Vec<StackFrame<'de>>,
+}
+
+impl<'de> RuntimeState<'de> {
+    fn new() -> Self {
+        Self {
+            stack: vec![StackFrame::default()],
+        }
+    }
+
+    pub fn current_stack_frame(&self) -> &StackFrame<'de> {
+        self.stack.last().expect("No stack frame")
+    }
+
+    pub fn current_stack_frame_mut(&mut self) -> &mut StackFrame<'de> {
+        self.stack.last_mut().expect("No stack frame")
+    }
+
+    pub fn get_variable_value(&self, variable: &str) -> Option<&EvaluateResult<'de>> {
+        self.current_stack_frame().variables.get(variable)
+    }
+
+    pub fn set_variable_value(&mut self, variable: &str, value: EvaluateResult<'de>) {
+        self.current_stack_frame_mut()
+            .variables
+            .insert(variable.to_string(), value);
+    }
+}
 
 pub struct Runner<'de> {
     evaluator: Evaluator<'de>,
+    state: RuntimeState<'de>,
 }
 
 impl<'de> Runner<'de> {
     pub fn new(input: &'de str) -> Self {
         let evaluator = Evaluator::new(input);
-        Self { evaluator }
+        let state = RuntimeState::new();
+        Self { evaluator, state }
     }
 
     pub fn run(mut self) -> Result<(), Error> {
@@ -50,34 +89,104 @@ impl<'de> Runner<'de> {
                     | Op::LessEqual
                     | Op::EqualEqual
                     | Op::BangEqual => {
-                        self.evaluator.evaluate_token_tree(&statement)?;
+                        // expression statement, just ignore
+                        self.evaluator
+                            .evaluate_token_tree(&statement, Some(&self.state))?;
                     }
-                    Op::Print => match operands.first() {
-                        Some(operand) => {
-                            let value_to_print = self.evaluator.evaluate_token_tree(operand);
-                            match value_to_print {
-                                Ok(result) => match result {
-                                    EvaluateResult::Bool(b) => {
-                                        println!("{}", b);
+
+                    Op::Print => {
+                        let print_value = |value: &EvaluateResult<'de>| match &**value {
+                            EvaluateResultInner::Bool(b) => {
+                                println!("{}", b);
+                            }
+                            EvaluateResultInner::Number(n) => {
+                                println!("{}", n);
+                            }
+                            EvaluateResultInner::String(s) => {
+                                println!("{}", s);
+                            }
+                            EvaluateResultInner::Nil => {
+                                println!("nil");
+                            }
+                        };
+
+                        match operands.first() {
+                            Some(operand) => match operand {
+                                TokenTree {
+                                    inner: TokenTreeInner::Atom(Atom::Ident(ident)),
+                                    range,
+                                } => match self.state.get_variable_value(ident) {
+                                    Some(value) => {
+                                        print_value(value);
                                     }
-                                    EvaluateResult::Number(n) => {
-                                        println!("{}", n);
-                                    }
-                                    EvaluateResult::String(s) => {
-                                        println!("{}", s);
-                                    }
-                                    EvaluateResult::Nil => {
-                                        println!("nil");
+                                    None => {
+                                        return Err(miette::miette!(
+                                            labels =
+                                                vec![LabeledSpan::at(range.0..range.1, "here")],
+                                            help = format!("{ident} is not defined"),
+                                            "Runtime error: variable not found"
+                                        )
+                                        .with_source_code(self.evaluator.whole.to_string()));
                                     }
                                 },
-                                Err(e) => {
-                                    return Err(e);
+
+                                TokenTree {
+                                    inner: TokenTreeInner::Atom(Atom::Super),
+                                    range,
+                                } => {
+                                    return Err(miette::miette!(
+                                        labels = vec![LabeledSpan::at(range.0..range.1, "here")],
+                                        help = format!("Unexpected {operand:?}"),
+                                        "Runtime error"
+                                    )
+                                    .with_source_code(self.evaluator.whole.to_string()));
                                 }
-                            }
+
+                                TokenTree {
+                                    inner: TokenTreeInner::Atom(Atom::This),
+                                    range,
+                                } => {}
+
+                                _ => {
+                                    let value_to_print = self
+                                        .evaluator
+                                        .evaluate_token_tree(operand, Some(&self.state));
+
+                                    match value_to_print {
+                                        Ok(result) => {
+                                            print_value(&result);
+                                        }
+                                        Err(e) => {
+                                            return Err(e);
+                                        }
+                                    }
+                                }
+                            },
+                            None => {}
                         }
-                        None => {}
-                    },
+                    }
+
                     Op::Return => {}
+
+                    Op::Var => {
+                        let variable_name = &operands[0];
+                        let init = &operands[1];
+
+                        match variable_name {
+                            TokenTree {
+                                inner: TokenTreeInner::Atom(Atom::Ident(ident)),
+                                ..
+                            } => {
+                                let init = self
+                                    .evaluator
+                                    .evaluate_token_tree(init, Some(&self.state))?;
+
+                                self.state.set_variable_value(&ident, init);
+                            }
+
+                            _ => unreachable!(),
+                        }
+                    }
                     _ => {}
                 },
 

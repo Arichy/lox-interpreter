@@ -2,43 +2,7 @@ use miette::{Diagnostic, Error, LabeledSpan, SourceSpan};
 use std::{borrow::Cow, fmt};
 use thiserror::Error;
 
-#[derive(Diagnostic, Debug, Error)]
-#[error("Unexpected EOF")]
-pub struct Eof;
-
-#[derive(Diagnostic, Debug, Error)]
-#[error("Unexpected token: '{token}' in input")]
-pub struct SingleTokenError {
-    #[source_code]
-    src: String,
-
-    pub token: char,
-
-    #[label = "this input character"]
-    err_span: SourceSpan,
-}
-impl SingleTokenError {
-    pub fn line(&self) -> usize {
-        let until_recognized_ = &self.src[..=self.err_span.offset()];
-        until_recognized_.lines().count()
-    }
-}
-
-#[derive(Diagnostic, Debug, Error)]
-#[error("Unterminated string")]
-pub struct StringTerminationError {
-    #[source_code]
-    src: String,
-
-    #[label = "this string literal"]
-    err_span: SourceSpan,
-}
-impl StringTerminationError {
-    pub fn line(&self) -> usize {
-        let until_recognized_ = &self.src[..=self.err_span.offset()];
-        until_recognized_.lines().count()
-    }
-}
+use crate::error::{Eof, SingleTokenError, StringTerminationError};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Token<'de> {
