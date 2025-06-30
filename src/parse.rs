@@ -6,6 +6,59 @@ use crate::{
     Lexer,
 };
 
+/// Defines the precedence levels for operators in the parser
+/// Higher values indicate higher precedence
+///
+/// This enum replaces the raw integer binding power values with named constants,
+/// making it easier to:
+/// 1. Understand the precedence hierarchy
+/// 2. Add new operators without having to manually assign precedence numbers
+/// 3. Maintain the precedence relationships between operators
+///
+/// Operators with "Right" suffix are used for the right side of binary expressions
+/// and are typically one level higher to enforce left-associativity
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum BindingPower {
+    None = 0,        // Base level (no binding power)
+    SpecialCall = 1, // return and print statements
+    LogicalOr = 3,   // Logical OR operator (||)
+    LogicalOrRight = 4,
+    Comparison = 5, // Comparison operators (==, !=, <, >, <=, >=)
+    ComparisonRight = 6,
+    Term = 7, // Additive operators (+, -)
+    TermRight = 8,
+    Factor = 9, // Multiplicative operators (*, /)
+    FactorRight = 10,
+    Unary = 11,        // Unary operators (-, !)
+    Call = 13,         // Function calls
+    MemberAccess = 15, // Member/field access (.)
+    MemberAccessRight = 16,
+}
+
+impl BindingPower {
+    /// Returns the next higher precedence level
+    /// Useful for incrementing binding power when needed, such as for right-associative operators
+    /// or when creating custom precedence rules
+    pub fn next_higher(&self) -> Self {
+        match self {
+            BindingPower::None => BindingPower::SpecialCall,
+            BindingPower::SpecialCall => BindingPower::LogicalOr, // Special calls have low precedence
+            BindingPower::LogicalOr => BindingPower::LogicalOrRight,
+            BindingPower::LogicalOrRight => BindingPower::Comparison,
+            BindingPower::Comparison => BindingPower::ComparisonRight,
+            BindingPower::ComparisonRight => BindingPower::Term,
+            BindingPower::Term => BindingPower::TermRight,
+            BindingPower::TermRight => BindingPower::Factor,
+            BindingPower::Factor => BindingPower::FactorRight,
+            BindingPower::FactorRight => BindingPower::Unary,
+            BindingPower::Unary => BindingPower::Call,
+            BindingPower::Call => BindingPower::MemberAccess,
+            BindingPower::MemberAccess => BindingPower::MemberAccessRight,
+            BindingPower::MemberAccessRight => BindingPower::MemberAccessRight, // Highest level
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct Parser<'de> {
     whole: &'de str,
@@ -183,32 +236,44 @@ impl fmt::Display for TokenTreeInner<'_> {
     }
 }
 
-fn prefix_binding_power(op: Op) -> ((), u8) {
+fn prefix_binding_power(op: Op) -> ((), BindingPower) {
     match op {
-        Op::Print | Op::Return => ((), 1),
-        Op::Bang | Op::Minus => ((), 11),
+        Op::Print | Op::Return => ((), BindingPower::SpecialCall), // Low precedence for statements
+        Op::Bang | Op::Minus => ((), BindingPower::Unary),
         _ => panic!("bad op: {:?}", op),
     }
 }
-fn postfix_binding_power(op: Op) -> Option<(u8, ())> {
+
+fn postfix_binding_power(op: Op) -> Option<(BindingPower, ())> {
     let res = match op {
-        Op::Call => (13, ()),
+        Op::Call => (BindingPower::Call, ()),
         _ => return None,
     };
     Some(res)
 }
-fn infix_binding_power(op: Op) -> Option<(u8, u8)> {
+
+fn infix_binding_power(op: Op) -> Option<(BindingPower, BindingPower)> {
     let res = match op {
-        Op::And | Op::Or => (3, 4),
+        // Logical operators (lowest precedence)
+        Op::And | Op::Or => (BindingPower::LogicalOr, BindingPower::LogicalOrRight),
+
+        // Comparison operators
         Op::BangEqual
         | Op::EqualEqual
         | Op::Less
         | Op::LessEqual
         | Op::Greater
-        | Op::GreaterEqual => (5, 6),
-        Op::Plus | Op::Minus => (7, 8),
-        Op::Star | Op::Slash => (9, 10),
-        Op::Field => (16, 15),
+        | Op::GreaterEqual => (BindingPower::Comparison, BindingPower::ComparisonRight),
+
+        // Additive operators
+        Op::Plus | Op::Minus => (BindingPower::Term, BindingPower::TermRight),
+
+        // Multiplicative operators
+        Op::Star | Op::Slash => (BindingPower::Factor, BindingPower::FactorRight),
+
+        // Member access (highest precedence)
+        Op::Field => (BindingPower::MemberAccessRight, BindingPower::MemberAccess),
+
         _ => return None,
     };
     Some(res)
@@ -223,13 +288,13 @@ impl<'de> Parser<'de> {
     }
 
     pub fn parse_expression(mut self) -> Result<TokenTree<'de>, Error> {
-        self.parse_expression_within(0)
+        self.parse_expression_within(BindingPower::None)
     }
 
     pub fn parse(&mut self) -> Result<Vec<TokenTree<'de>>, Error> {
         let mut token_trees = vec![];
         loop {
-            match self.parse_statement_within(0) {
+            match self.parse_statement_within(BindingPower::None) {
                 Ok(token) => {
                     if matches!(
                         &token,
@@ -259,7 +324,7 @@ impl<'de> Parser<'de> {
         let left_brace_token = self.lexer.expect(TokenKind::LeftBrace, "missing {")?;
 
         // TODO: in a loop with semicolons? depends on class vs body
-        let block = self.parse_statement_within(0)?;
+        let block = self.parse_statement_within(BindingPower::None)?;
         let right_brace_token = self.lexer.expect(TokenKind::RightBrace, "missing }")?;
 
         Ok((block, left_brace_token.offset, right_brace_token.offset + 1))
@@ -280,9 +345,11 @@ impl<'de> Parser<'de> {
                 let mut end;
 
                 loop {
-                    let argument = self.parse_expression_within(0).wrap_err_with(|| {
-                        format!("in argument #{} of function call", arguments.len() + 1)
-                    })?;
+                    let argument = self
+                        .parse_expression_within(BindingPower::None)
+                        .wrap_err_with(|| {
+                            format!("in argument #{} of function call", arguments.len() + 1)
+                        })?;
 
                     arguments.push(argument);
 
@@ -317,7 +384,7 @@ impl<'de> Parser<'de> {
     pub fn parse_statement_within(
         &mut self,
         // looking_for: Option<(Op, usize)>,
-        min_bp: u8,
+        min_bp: BindingPower,
     ) -> Result<TokenTree<'de>, Error> {
         let lhs = match self.lexer.next() {
             Some(Ok(token)) => token,
@@ -434,7 +501,7 @@ impl<'de> Parser<'de> {
                 offset,
             } => {
                 let lhs = self
-                    .parse_expression_within(0)
+                    .parse_expression_within(BindingPower::None)
                     .wrap_err("in bracketed expression")?;
 
                 let right_paren_token = self
@@ -511,21 +578,21 @@ impl<'de> Parser<'de> {
                     .wrap_err("in for loop condition")?;
 
                 let init = self
-                    .parse_expression_within(0)
+                    .parse_expression_within(BindingPower::None)
                     .wrap_err("in init condition of for loop")?;
                 self.lexer
                     .expect(TokenKind::Semicolon, "missing ;")
                     .wrap_err("in for loop condition")?;
 
                 let cond = self
-                    .parse_expression_within(0)
+                    .parse_expression_within(BindingPower::None)
                     .wrap_err("in loop condition of for loop")?;
                 self.lexer
                     .expect(TokenKind::Semicolon, "missing ;")
                     .wrap_err("in for loop condition")?;
 
                 let inc = self
-                    .parse_expression_within(0)
+                    .parse_expression_within(BindingPower::None)
                     .wrap_err("in incremental condition of for loop")?;
 
                 self.lexer
@@ -556,7 +623,7 @@ impl<'de> Parser<'de> {
                     .wrap_err("in while loop condition")?;
 
                 let cond = self
-                    .parse_expression_within(0)
+                    .parse_expression_within(BindingPower::None)
                     .wrap_err_with(|| format!("in condition of while loop"))?;
 
                 self.lexer
@@ -604,7 +671,7 @@ impl<'de> Parser<'de> {
                         .wrap_err("in variable assignment")?;
 
                     let second = self
-                        .parse_expression_within(0)
+                        .parse_expression_within(BindingPower::None)
                         .wrap_err("in variable assignment expression")?;
 
                     // Variable declaration with initialization expression
@@ -622,7 +689,7 @@ impl<'de> Parser<'de> {
 
                 // Handle semicolon in a unified way
                 self.maybe_semicolon();
-                
+
                 return Ok(result);
             }
 
@@ -738,7 +805,7 @@ impl<'de> Parser<'de> {
                     .wrap_err("in if condition")?;
 
                 let cond = self
-                    .parse_expression_within(0)
+                    .parse_expression_within(BindingPower::None)
                     .wrap_err("in if condition")?;
 
                 self.lexer
@@ -971,8 +1038,7 @@ impl<'de> Parser<'de> {
 
     pub fn parse_expression_within(
         &mut self,
-        // looking_for: Option<(Op, usize)>,
-        min_bp: u8,
+        min_bp: BindingPower,
     ) -> Result<TokenTree<'de>, Error> {
         let lhs = match self.lexer.next() {
             Some(Ok(token)) => token,
@@ -983,8 +1049,6 @@ impl<'de> Parser<'de> {
                 })
             }
             Some(Err(e)) => {
-                // let msg = looking_for_msg();
-
                 return Err(e).wrap_err("on left-hand side");
             }
         };
@@ -1064,7 +1128,7 @@ impl<'de> Parser<'de> {
                 origin,
             } => {
                 let lhs = self
-                    .parse_expression_within(0)
+                    .parse_expression_within(BindingPower::None)
                     .wrap_err("in bracketed expression")?;
 
                 let right_paren_token = self
@@ -1289,7 +1353,7 @@ impl<'de> Iterator for Parser<'de> {
     type Item = Result<TokenTree<'de>, Error>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match self.parse_statement_within(0) {
+        match self.parse_statement_within(BindingPower::None) {
             Ok(statement) => {
                 if matches!(
                     &statement,
