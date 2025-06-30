@@ -590,22 +590,40 @@ impl<'de> Parser<'de> {
                     range: (token.offset, token.offset + token.origin.len()),
                 };
 
-                self.lexer
-                    .expect(TokenKind::Equal, "missing =")
-                    .wrap_err("in variable assignment")?;
+                // Prepare variable declaration result
+                let result = if matches!(
+                    self.lexer.peek(),
+                    Some(Ok(Token {
+                        kind: TokenKind::Equal,
+                        ..
+                    }))
+                ) {
+                    // Found equals sign, parse initialization expression
+                    self.lexer
+                        .expect(TokenKind::Equal, "missing =")
+                        .wrap_err("in variable assignment")?;
 
-                let second = self
-                    .parse_expression_within(0)
-                    .wrap_err("in variable assignment expression")?;
+                    let second = self
+                        .parse_expression_within(0)
+                        .wrap_err("in variable assignment expression")?;
 
-                // return Ok(TokenTree::Cons(Op::Var, vec![ident, second]));
+                    // Variable declaration with initialization expression
+                    TokenTree {
+                        range: (offset, second.range.1),
+                        inner: TokenTreeInner::Cons(Op::Var, vec![ident, second]),
+                    }
+                } else {
+                    // Variable declaration without initialization expression
+                    TokenTree {
+                        range: (offset, ident.range.1),
+                        inner: TokenTreeInner::Cons(Op::Var, vec![ident]),
+                    }
+                };
 
+                // Handle semicolon in a unified way
                 self.maybe_semicolon();
-
-                return Ok(TokenTree {
-                    range: (offset, second.range.1),
-                    inner: TokenTreeInner::Cons(Op::Var, vec![ident, second]),
-                });
+                
+                return Ok(result);
             }
 
             Token {

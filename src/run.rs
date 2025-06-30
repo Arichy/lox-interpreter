@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use miette::{miette, Error, LabeledSpan};
 
 use crate::{
+    error,
     evaluate::{EvaluateResult, EvaluateResultInner, Evaluator},
     parse::{Atom, Op, TokenTree, TokenTreeInner},
 };
@@ -52,6 +53,10 @@ impl<'de> Runner<'de> {
         let evaluator = Evaluator::new(input);
         let state = RuntimeState::new();
         Self { evaluator, state }
+    }
+
+    fn whole(&self) -> &str {
+        self.evaluator.whole
     }
 
     pub fn run(mut self) -> Result<(), Error> {
@@ -120,13 +125,12 @@ impl<'de> Runner<'de> {
                                         print_value(value);
                                     }
                                     None => {
-                                        return Err(miette::miette!(
-                                            labels =
-                                                vec![LabeledSpan::at(range.0..range.1, "here")],
-                                            help = format!("{ident} is not defined"),
-                                            "Runtime error: variable not found"
-                                        )
-                                        .with_source_code(self.evaluator.whole.to_string()));
+                                        return Err(error::RuntimeError::ReferenceError {
+                                            src: self.whole().to_string(),
+                                            ident: ident.to_string(),
+                                            err_span: (range.0..range.1).into(),
+                                        }
+                                        .into());
                                     }
                                 },
 
@@ -139,7 +143,7 @@ impl<'de> Runner<'de> {
                                         help = format!("Unexpected {operand:?}"),
                                         "Runtime error"
                                     )
-                                    .with_source_code(self.evaluator.whole.to_string()));
+                                    .with_source_code(self.whole().to_string()));
                                 }
 
                                 TokenTree {
@@ -170,16 +174,19 @@ impl<'de> Runner<'de> {
 
                     Op::Var => {
                         let variable_name = &operands[0];
-                        let init = &operands[1];
+                        let init = operands.get(1);
 
                         match variable_name {
                             TokenTree {
                                 inner: TokenTreeInner::Atom(Atom::Ident(ident)),
                                 ..
                             } => {
-                                let init = self
-                                    .evaluator
-                                    .evaluate_token_tree(init, Some(&self.state))?;
+                                let init = if let Some(init) = init {
+                                    self.evaluator
+                                        .evaluate_token_tree(init, Some(&self.state))?
+                                } else {
+                                    EvaluateResult::new_nil()
+                                };
 
                                 self.state.set_variable_value(&ident, init);
                             }
