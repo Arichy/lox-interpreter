@@ -203,6 +203,9 @@ pub enum TokenTreeInner<'de> {
         no: Option<Box<TokenTree<'de>>>,
     },
     Eof,
+    Block {
+        statements: Vec<TokenTree<'de>>,
+    },
 }
 
 impl fmt::Display for TokenTree<'_> {
@@ -246,6 +249,13 @@ impl fmt::Display for TokenTreeInner<'_> {
                     write!(f, " {no}")?;
                 }
                 write!(f, ")")
+            }
+            TokenTreeInner::Block { statements } => {
+                write!(f, "{{")?;
+                for statement in statements {
+                    write!(f, " {statement}")?;
+                }
+                write!(f, " }}")
             }
             TokenTreeInner::Eof => {
                 write!(f, "")
@@ -342,14 +352,70 @@ impl<'de> Parser<'de> {
     }
 
     /// The usizes in Result is the range
-    pub fn parse_block(&mut self) -> Result<(TokenTree<'de>, usize, usize), Error> {
-        let left_brace_token = self.lexer.expect(TokenKind::LeftBrace, "missing {")?;
+    pub fn parse_block(
+        &mut self,
+        processed_left_brace: Option<Token<'de>>,
+    ) -> Result<(TokenTree<'de>, usize, usize), Error> {
+        let left_brace = match processed_left_brace {
+            Some(token) => token,
+            None => self
+                .lexer
+                .expect(TokenKind::LeftBrace, "missing {")
+                .wrap_err("in block expression")?,
+        };
 
-        // TODO: in a loop with semicolons? depends on class vs body
-        let block = self.parse_statement_within(BindingPower::None)?;
-        let right_brace_token = self.lexer.expect(TokenKind::RightBrace, "missing }")?;
+        let mut statements = vec![];
+        loop {
+            let statement = self
+                .parse_statement_within(BindingPower::None)
+                .wrap_err("in block statement")?;
+            if matches!(
+                &statement,
+                TokenTree {
+                    inner: TokenTreeInner::Eof,
+                    ..
+                }
+            ) {
+                return Err(error::Eof {
+                    src: self.whole.to_string(),
+                    err_span: (self.whole.len() - 1, self.whole.len() - 1).into(),
+                }
+                .into());
+            }
 
-        Ok((block, left_brace_token.offset, right_brace_token.offset + 1))
+            statements.push(statement);
+
+            let next_token = self.lexer.peek();
+            if next_token.is_none() {
+                // return error in next iteration
+                continue;
+            }
+
+            if next_token
+                .unwrap()
+                .as_ref()
+                .map_or(false, |t| t.kind == TokenKind::RightBrace)
+            {
+                // If the next token is None or a right brace, we can stop parsing statements
+                break;
+            }
+        }
+
+        let start = left_brace.offset;
+
+        let right_brace_token = self
+            .lexer
+            .expect(TokenKind::RightBrace, "missing }")
+            .wrap_err("after block expression")?;
+
+        let end = right_brace_token.offset + 1;
+
+        let block = TokenTree {
+            inner: TokenTreeInner::Block { statements },
+            range: (start, end),
+        };
+
+        Ok((block, start, end))
     }
 
     /// The usize in Result is the offset of right paren, the end position of the call expression
@@ -542,6 +608,23 @@ impl<'de> Parser<'de> {
                 }
             }
 
+            left_brace_token @ Token {
+                kind: TokenKind::LeftBrace,
+                origin,
+                offset,
+            } => {
+                let (block, block_start, block_end) = self
+                    .parse_block(Some(left_brace_token))
+                    .wrap_err("in block expression")?;
+
+                return Ok(TokenTree {
+                    inner: TokenTreeInner::Block {
+                        statements: vec![block],
+                    },
+                    range: (offset, block_end),
+                });
+            }
+
             // unary prefix expression
             Token {
                 kind: TokenKind::Print | TokenKind::Return,
@@ -621,12 +704,14 @@ impl<'de> Parser<'de> {
                     .expect(TokenKind::RightParen, "missing )")
                     .wrap_err("in for loop condition")?;
 
-                self.lexer
+                let left_brace_token = self
+                    .lexer
                     .expect(TokenKind::LeftBrace, "missing {")
                     .wrap_err("in for loop")?;
 
-                let (block, block_start, block_end) =
-                    self.parse_block().wrap_err("in body of for loop")?;
+                let (block, block_start, block_end) = self
+                    .parse_block(Some(left_brace_token))
+                    .wrap_err("in body of for loop")?;
 
                 // return Ok(TokenTree::Cons(Op::For, vec![init, cond, inc, block]));
                 return Ok(TokenTree {
@@ -648,12 +733,14 @@ impl<'de> Parser<'de> {
                     .parse_expression_within(BindingPower::None)
                     .wrap_err_with(|| format!("in condition of while loop"))?;
 
-                self.lexer
+                let left_brace_token = self
+                    .lexer
                     .expect(TokenKind::RightParen, "missing )")
                     .wrap_err("in while loop condition")?;
 
-                let (block, block_start, block_end) =
-                    self.parse_block().wrap_err("in body of while loop")?;
+                let (block, block_start, block_end) = self
+                    .parse_block(Some(left_brace_token))
+                    .wrap_err("in body of while loop")?;
 
                 // return Ok(TokenTree::Cons(Op::While, vec![cond, block]));
                 return Ok(TokenTree {
@@ -733,7 +820,7 @@ impl<'de> Parser<'de> {
                 };
 
                 let (block, block_start, block_end) =
-                    self.parse_block().wrap_err("in class definition")?;
+                    self.parse_block(None).wrap_err("in class definition")?;
 
                 // return Ok(TokenTree::Cons(Op::Class, vec![ident, block]));
 
@@ -798,7 +885,7 @@ impl<'de> Parser<'de> {
                 }
 
                 let (block, block_start, block_end) = self
-                    .parse_block()
+                    .parse_block(None)
                     .wrap_err_with(|| format!("in body of function {name}"))?;
 
                 // return Ok(TokenTree::Fun {
@@ -843,7 +930,7 @@ impl<'de> Parser<'de> {
                 //     .expect(TokenKind::RightBrace, "missing }")
                 //     .wrap_err("in if condition")?;
                 let (block, block_start, block_end) =
-                    self.parse_block().wrap_err("in body of if")?;
+                    self.parse_block(None).wrap_err("in body of if")?;
 
                 let mut otherwise = None;
                 if matches!(
@@ -856,7 +943,7 @@ impl<'de> Parser<'de> {
                 ) {
                     self.lexer.next();
 
-                    otherwise = Some(self.parse_block().wrap_err("in body of else")?);
+                    otherwise = Some(self.parse_block(None).wrap_err("in body of else")?);
                 }
 
                 // return Ok(TokenTree::If {
@@ -1199,6 +1286,56 @@ impl<'de> Parser<'de> {
                     range: (offset, rhs.range.1),
                     inner: TokenTreeInner::Cons(op, vec![rhs]),
                 }
+            }
+
+            Token {
+                kind: TokenKind::Var,
+                offset,
+                origin,
+            } => {
+                let token = self
+                    .lexer
+                    .expect(TokenKind::Ident, "expected identifier")
+                    .wrap_err("in variable assignment")?;
+                assert_eq!(token.kind, TokenKind::Ident);
+
+                // let ident = TokenTree::Atom(Atom::Ident(token.origin));
+                let ident: TokenTree<'de> = TokenTree {
+                    inner: TokenTreeInner::Atom(Atom::Ident(Cow::Borrowed(token.origin))),
+                    range: (token.offset, token.offset + token.origin.len()),
+                };
+
+                // Prepare variable declaration result
+                let result = if matches!(
+                    self.lexer.peek(),
+                    Some(Ok(Token {
+                        kind: TokenKind::Equal,
+                        ..
+                    }))
+                ) {
+                    // Found equals sign, parse initialization expression
+                    self.lexer
+                        .expect(TokenKind::Equal, "missing =")
+                        .wrap_err("in variable assignment")?;
+
+                    let second = self
+                        .parse_expression_within(BindingPower::None)
+                        .wrap_err("in variable assignment expression")?;
+
+                    // Variable declaration with initialization expression
+                    TokenTree {
+                        range: (offset, second.range.1),
+                        inner: TokenTreeInner::Cons(Op::Var, vec![ident, second]),
+                    }
+                } else {
+                    // Variable declaration without initialization expression
+                    TokenTree {
+                        range: (offset, ident.range.1),
+                        inner: TokenTreeInner::Cons(Op::Var, vec![ident]),
+                    }
+                };
+
+                return Ok(result);
             }
 
             token => {

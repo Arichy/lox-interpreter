@@ -88,7 +88,7 @@ fn main() -> miette::Result<()> {
                 }
                 Err(e) => {
                     // TODO: match error line format
-                    // imp::log_stderr!("{e:?}");
+                    imp::log_stderr!("{e:?}");
                     std::process::exit(65);
                 }
             }

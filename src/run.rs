@@ -7,9 +7,59 @@ use crate::{
     evaluate::{EvaluateResult, EvaluateResultInner, Evaluator},
     parse::{Atom, Op, TokenTree, TokenTreeInner},
 };
+
+#[derive(Debug, Default)]
+pub struct Scope<'de> {
+    variables: HashMap<String, EvaluateResult<'de>>,
+}
+
+impl<'de> Scope<'de> {
+    pub fn new() -> Self {
+        Self {
+            variables: HashMap::new(),
+        }
+    }
+
+    pub fn is_variable_defined(&self, variable: &str) -> bool {
+        self.variables.contains_key(variable)
+    }
+
+    pub fn get_variable_value(&self, variable: &str) -> Option<&EvaluateResult<'de>> {
+        self.variables.get(variable)
+    }
+
+    pub fn set_variable_value(&mut self, variable: String, value: EvaluateResult<'de>) {
+        self.variables.insert(variable, value);
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct StackFrame<'de> {
-    variables: HashMap<String, EvaluateResult<'de>>,
+    scopes: Vec<Scope<'de>>,
+}
+
+impl<'de> StackFrame<'de> {
+    pub fn new() -> Self {
+        Self {
+            scopes: vec![Scope::new()],
+        }
+    }
+
+    pub fn current_scope(&self) -> &Scope<'de> {
+        self.scopes.last().expect("No scope in stack frame")
+    }
+
+    pub fn current_scope_mut(&mut self) -> &mut Scope<'de> {
+        self.scopes.last_mut().expect("No scope in stack frame")
+    }
+
+    pub fn push_scope(&mut self) {
+        self.scopes.push(Scope::new());
+    }
+
+    pub fn pop_scope(&mut self) {
+        self.scopes.pop();
+    }
 }
 
 #[derive(Debug, Default)]
@@ -20,7 +70,7 @@ pub struct RuntimeState<'de> {
 impl<'de> RuntimeState<'de> {
     fn new() -> Self {
         Self {
-            stack: vec![StackFrame::default()],
+            stack: vec![StackFrame::new()],
         }
     }
 
@@ -33,17 +83,21 @@ impl<'de> RuntimeState<'de> {
     }
 
     pub fn is_variable_defined(&self, variable: &str) -> bool {
-        self.current_stack_frame().variables.contains_key(variable)
+        self.current_stack_frame()
+            .current_scope()
+            .is_variable_defined(variable)
     }
 
     pub fn get_variable_value(&self, variable: &str) -> Option<&EvaluateResult<'de>> {
-        self.current_stack_frame().variables.get(variable)
+        self.current_stack_frame()
+            .current_scope()
+            .get_variable_value(variable)
     }
 
     pub fn set_variable_value(&mut self, variable: &str, value: EvaluateResult<'de>) {
         self.current_stack_frame_mut()
-            .variables
-            .insert(variable.to_string(), value);
+            .current_scope_mut()
+            .set_variable_value(variable.to_string(), value);
     }
 }
 
@@ -68,7 +122,7 @@ impl<'de> Runner<'de> {
             let statement = self.evaluator.parser.next();
             match statement {
                 Some(Ok(statement)) => {
-                    self.run_statement(statement)?;
+                    self.run_statement(&statement)?;
                 }
                 Some(Err(err)) => {
                     crate::log_stderr!("{err:?}");
@@ -81,7 +135,7 @@ impl<'de> Runner<'de> {
         Ok(())
     }
 
-    pub fn run_statement(&mut self, statement: TokenTree<'de>) -> Result<(), Error> {
+    pub fn run_statement(&mut self, statement: &TokenTree<'de>) -> Result<(), Error> {
         match &statement {
             TokenTree { inner, range } => match inner {
                 TokenTreeInner::Atom(atom) => {}
@@ -212,6 +266,18 @@ impl<'de> Runner<'de> {
 
                 TokenTreeInner::If { condition, yes, no } => {}
 
+                TokenTreeInner::Block { statements } => {
+                    // Create a new scope for the block
+                    self.state.current_stack_frame_mut().push_scope();
+
+                    // Run each statement in the block
+                    for statement in statements {
+                        self.run_statement(statement)?;
+                    }
+
+                    // Pop the scope after executing the block
+                    self.state.current_stack_frame_mut().pop_scope();
+                }
                 TokenTreeInner::Eof => {}
             },
             _ => {}
