@@ -90,6 +90,24 @@ impl<'de> Evaluator<'de> {
         self.evaluate_token_tree(&token_tree, None)
     }
 
+    fn evaluate_identifier(
+        &self,
+        ident: &str,
+        state: &mut RuntimeState<'de>,
+        err_span: SourceSpan,
+    ) -> Result<EvaluateResult<'de>, Error> {
+        if let Some(ident_value) = state.get_variable_value(ident) {
+            Ok(ident_value.clone())
+        } else {
+            return Err(error::RuntimeError::ReferenceError {
+                src: self.whole.to_string(),
+                ident: ident.to_string(),
+                err_span,
+            }
+            .into());
+        }
+    }
+
     pub fn evaluate_token_tree<'rt>(
         &self,
         token_tree: &TokenTree<'de>,
@@ -107,16 +125,11 @@ impl<'de> Evaluator<'de> {
 
                 Atom::Ident(ident) => {
                     if let Some(state) = state {
-                        if let Some(ident_value) = state.get_variable_value(ident) {
-                            ident_value.clone()
-                        } else {
-                            return Err(error::RuntimeError::ReferenceError {
-                                src: self.whole.to_string(),
-                                ident: ident.to_string(),
-                                err_span: (token_tree.range.0..token_tree.range.1).into(),
-                            }
-                            .into());
-                        }
+                        self.evaluate_identifier(
+                            ident,
+                            state,
+                            (token_tree.range.0..token_tree.range.1).into(),
+                        )?
                     } else {
                         return Err(error::UnexpectedTokenTree {
                             src: self.whole.to_string(),
@@ -369,9 +382,11 @@ impl<'de> Evaluator<'de> {
                     let value = if let Some(state) = state {
                         let value = self.evaluate_token_tree(&operands[1], Some(state))?;
 
-                        if state.is_variable_defined(ident) {
-                            state.set_variable_value(ident, value.clone());
+                        if let Some(variable) = state.get_variable_value_mut(ident) {
+                            // Update the variable value in the current stack frame
+                            *variable = value.clone();
                         } else {
+                            //  state.new_variable(ident.to_string(), value.clone());
                             return Err(error::RuntimeError::ReferenceError {
                                 src: self.whole.to_string(),
                                 ident: ident.to_string(),

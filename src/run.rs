@@ -31,6 +31,10 @@ impl<'de> Scope<'de> {
     pub fn set_variable_value(&mut self, variable: String, value: EvaluateResult<'de>) {
         self.variables.insert(variable, value);
     }
+
+    pub fn get_variable_value_mut(&mut self, variable: &str) -> Option<&mut EvaluateResult<'de>> {
+        self.variables.get_mut(variable)
+    }
 }
 
 #[derive(Debug, Default)]
@@ -43,6 +47,10 @@ impl<'de> StackFrame<'de> {
         Self {
             scopes: vec![Scope::new()],
         }
+    }
+
+    pub fn scopes(&self) -> &[Scope<'de>] {
+        &self.scopes
     }
 
     pub fn current_scope(&self) -> &Scope<'de> {
@@ -82,22 +90,30 @@ impl<'de> RuntimeState<'de> {
         self.stack.last_mut().expect("No stack frame")
     }
 
-    pub fn is_variable_defined(&self, variable: &str) -> bool {
-        self.current_stack_frame()
-            .current_scope()
-            .is_variable_defined(variable)
-    }
-
     pub fn get_variable_value(&self, variable: &str) -> Option<&EvaluateResult<'de>> {
-        self.current_stack_frame()
-            .current_scope()
-            .get_variable_value(variable)
+        let current_stack_frame = self.current_stack_frame();
+        for scope in current_stack_frame.scopes().iter().rev() {
+            if let Some(value) = scope.get_variable_value(variable) {
+                return Some(value);
+            }
+        }
+        None
     }
 
-    pub fn set_variable_value(&mut self, variable: &str, value: EvaluateResult<'de>) {
+    pub fn get_variable_value_mut(&mut self, variable: &str) -> Option<&mut EvaluateResult<'de>> {
+        let current_stack_frame = self.current_stack_frame_mut();
+        for scope in current_stack_frame.scopes.iter_mut().rev() {
+            if let Some(value) = scope.get_variable_value_mut(variable) {
+                return Some(value);
+            }
+        }
+        None
+    }
+
+    pub fn new_variable(&mut self, variable: String, value: EvaluateResult<'de>) {
         self.current_stack_frame_mut()
             .current_scope_mut()
-            .set_variable_value(variable.to_string(), value);
+            .set_variable_value(variable, value);
     }
 }
 
@@ -247,7 +263,7 @@ impl<'de> Runner<'de> {
                                     EvaluateResult::new_nil()
                                 };
 
-                                self.state.set_variable_value(&ident, init);
+                                self.state.new_variable(ident.to_string(), init);
                             }
 
                             _ => unreachable!(),
