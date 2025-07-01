@@ -51,6 +51,8 @@ pub enum TokenKind {
     True,
     Var,
     While,
+    Break,
+    Continue,
 }
 
 impl fmt::Display for Token<'_> {
@@ -102,6 +104,8 @@ impl fmt::Display for Token<'_> {
             TokenKind::True => write!(f, "TRUE {origin} null"),
             TokenKind::Var => write!(f, "VAR {origin} null"),
             TokenKind::While => write!(f, "WHILE {origin} null"),
+            TokenKind::Break => write!(f, "BREAK {origin} null"),
+            TokenKind::Continue => write!(f, "CONTINUE {origin} null"),
         }
     }
 }
@@ -359,6 +363,8 @@ impl<'de> Iterator for Lexer<'de> {
                         "true" => TokenKind::True,
                         "var" => TokenKind::Var,
                         "while" => TokenKind::While,
+                        "break" => TokenKind::Break,
+                        "continue" => TokenKind::Continue,
                         _ => TokenKind::Ident,
                     };
 

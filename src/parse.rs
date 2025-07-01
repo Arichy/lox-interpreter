@@ -134,13 +134,11 @@ pub enum Op {
     Or,
     Equal,
     Call,
-    For,
     Class,
     Print,
     Return,
     Field,
     Var,
-    While,
     Group,
 }
 
@@ -165,13 +163,11 @@ impl fmt::Display for Op {
                 Op::Or => "or",
                 Op::Call => "call",
                 Op::Equal => "=",
-                Op::For => "for",
                 Op::Class => "class",
                 Op::Print => "print",
                 Op::Return => "return",
                 Op::Field => ".",
                 Op::Var => "var",
-                Op::While => "while",
                 Op::Group => "group",
             }
         )
@@ -202,10 +198,22 @@ pub enum TokenTreeInner<'de> {
         yes: Box<TokenTree<'de>>,
         no: Option<Box<TokenTree<'de>>>,
     },
-    Eof,
+    While {
+        condition: Box<TokenTree<'de>>,
+        body: Box<TokenTree<'de>>,
+    },
+    For {
+        init: Option<Box<TokenTree<'de>>>,
+        condition: Option<Box<TokenTree<'de>>>,
+        increment: Option<Box<TokenTree<'de>>>,
+        body: Box<TokenTree<'de>>,
+    },
+    Break,
+    Continue,
     Block {
         statements: Vec<TokenTree<'de>>,
     },
+    Eof,
 }
 
 impl fmt::Display for TokenTree<'_> {
@@ -250,6 +258,27 @@ impl fmt::Display for TokenTreeInner<'_> {
                 }
                 write!(f, ")")
             }
+            TokenTreeInner::While { condition, body } => {
+                write!(f, "(while {condition} {body})")
+            }
+            TokenTreeInner::For {
+                init,
+                condition,
+                increment,
+                body,
+            } => {
+                write!(f, "(for")?;
+                if let Some(init) = init {
+                    write!(f, " {init}")?;
+                }
+                if let Some(condition) = condition {
+                    write!(f, " {condition}")?;
+                }
+                if let Some(increment) = increment {
+                    write!(f, " {increment}")?;
+                }
+                write!(f, " {body})")
+            }
             TokenTreeInner::Block { statements } => {
                 write!(f, "{{")?;
                 for statement in statements {
@@ -257,6 +286,8 @@ impl fmt::Display for TokenTreeInner<'_> {
                 }
                 write!(f, " }}")
             }
+            TokenTreeInner::Break => write!(f, "(break)"),
+            TokenTreeInner::Continue => write!(f, "(continue)"),
             TokenTreeInner::Eof => {
                 write!(f, "")
             }
@@ -320,7 +351,7 @@ impl<'de> Parser<'de> {
         }
     }
 
-    pub fn parse_expression(mut self) -> Result<TokenTree<'de>, Error> {
+    pub fn parse_expression(&mut self) -> Result<TokenTree<'de>, Error> {
         self.parse_expression_within(BindingPower::None)
     }
 
@@ -678,45 +709,76 @@ impl<'de> Parser<'de> {
                 offset,
                 origin,
             } => {
+                // @TODO: handle None init/condition/increment case
                 self.lexer
                     .expect(TokenKind::LeftParen, "missing (")
                     .wrap_err("in for loop condition")?;
 
-                let init = self
-                    .parse_expression_within(BindingPower::None)
-                    .wrap_err("in init condition of for loop")?;
+                let init = if let Some(Ok(Token {
+                    kind: TokenKind::Semicolon,
+                    ..
+                })) = self.lexer.peek()
+                {
+                    None
+                } else {
+                    Some(Box::new(
+                        self.parse_expression_within(BindingPower::None)
+                            .wrap_err("in init condition of for loop")?,
+                    ))
+                };
                 self.lexer
                     .expect(TokenKind::Semicolon, "missing ;")
                     .wrap_err("in for loop condition")?;
 
-                let cond = self
-                    .parse_expression_within(BindingPower::None)
-                    .wrap_err("in loop condition of for loop")?;
+                let cond = if let Some(Ok(Token {
+                    kind: TokenKind::Semicolon,
+                    ..
+                })) = self.lexer.peek()
+                {
+                    None
+                } else {
+                    Some(Box::new(
+                        self.parse_expression_within(BindingPower::None)
+                            .wrap_err("in condition of for loop")?,
+                    ))
+                };
                 self.lexer
                     .expect(TokenKind::Semicolon, "missing ;")
                     .wrap_err("in for loop condition")?;
 
-                let inc = self
-                    .parse_expression_within(BindingPower::None)
-                    .wrap_err("in incremental condition of for loop")?;
+                let inc = if let Some(Ok(Token {
+                    kind: TokenKind::RightParen,
+                    ..
+                })) = self.lexer.peek()
+                {
+                    None
+                } else {
+                    Some(Box::new(
+                        self.parse_expression_within(BindingPower::None)
+                            .wrap_err("in increment condition of for loop")?,
+                    ))
+                };
 
                 self.lexer
                     .expect(TokenKind::RightParen, "missing )")
                     .wrap_err("in for loop condition")?;
 
-                let left_brace_token = self
-                    .lexer
-                    .expect(TokenKind::LeftBrace, "missing {")
-                    .wrap_err("in for loop")?;
+                // let (block, block_start, block_end) = self
+                //     .parse_block(Some(left_brace_token))
+                //     .wrap_err("in body of for loop")?;
 
-                let (block, block_start, block_end) = self
-                    .parse_block(Some(left_brace_token))
+                let (body, body_start, body_end) = self
+                    .parse_single_statement_or_block()
                     .wrap_err("in body of for loop")?;
 
-                // return Ok(TokenTree::Cons(Op::For, vec![init, cond, inc, block]));
                 return Ok(TokenTree {
-                    inner: TokenTreeInner::Cons(Op::For, vec![init, cond, inc, block]),
-                    range: (offset, block_end),
+                    inner: TokenTreeInner::For {
+                        init,
+                        condition: cond,
+                        increment: inc,
+                        body: Box::new(body),
+                    },
+                    range: (offset, body_end),
                 });
             }
 
@@ -738,13 +800,19 @@ impl<'de> Parser<'de> {
                     .expect(TokenKind::RightParen, "missing )")
                     .wrap_err("in while loop condition")?;
 
+                // let (block, block_start, block_end) = self
+                //     .parse_block(Some(left_brace_token))
+                //     .wrap_err("in body of while loop")?;
+
                 let (block, block_start, block_end) = self
-                    .parse_block(Some(left_brace_token))
+                    .parse_single_statement_or_block()
                     .wrap_err("in body of while loop")?;
 
-                // return Ok(TokenTree::Cons(Op::While, vec![cond, block]));
                 return Ok(TokenTree {
-                    inner: TokenTreeInner::Cons(Op::While, vec![cond, block]),
+                    inner: TokenTreeInner::While {
+                        condition: Box::new(cond),
+                        body: Box::new(block),
+                    },
                     range: (offset, block_end),
                 });
             }
@@ -921,16 +989,12 @@ impl<'de> Parser<'de> {
                     .expect(TokenKind::RightParen, "missing )")
                     .wrap_err("in if condition")?;
 
-                // self.lexer
-                //     .expect(TokenKind::LeftBrace, "missing {")
-                //     .wrap_err("in if condition")?;
+                let peek = self.lexer.peek();
 
-                // let block = self.parse_within(0).wrap_err("in block of if")?;
-                // self.lexer
-                //     .expect(TokenKind::RightBrace, "missing }")
-                //     .wrap_err("in if condition")?;
-                let (block, block_start, block_end) =
-                    self.parse_block(None).wrap_err("in body of if")?;
+                // };
+                let (truthy_branch, truthy_start, truthy_end) = self
+                    .parse_single_statement_or_block()
+                    .wrap_err("in body of if")?;
 
                 let mut otherwise = None;
                 if matches!(
@@ -943,26 +1007,50 @@ impl<'de> Parser<'de> {
                 ) {
                     self.lexer.next();
 
-                    otherwise = Some(self.parse_block(None).wrap_err("in body of else")?);
+                    // otherwise = Some(self.parse_block(None).wrap_err("in body of else")?);
+                    let (otherwise_block, otherwise_start, otherwise_end) = self
+                        .parse_single_statement_or_block()
+                        .wrap_err("in body of else")?;
+                    otherwise = Some((otherwise_block, otherwise_start, otherwise_end));
                 }
-
-                // return Ok(TokenTree::If {
-                //     condition: Box::new(cond),
-                //     yes: Box::new(block),
-                //     no: otherwise.map(Box::new),
-                // });
 
                 let end = otherwise
                     .as_ref()
-                    .map_or(block_end, |otherwise| otherwise.2);
+                    .map_or(truthy_end, |otherwise| otherwise.2);
 
                 return Ok(TokenTree {
                     inner: TokenTreeInner::If {
                         condition: Box::new(cond),
-                        yes: Box::new(block),
+                        yes: Box::new(truthy_branch),
                         no: otherwise.map(|(otherwise_block, _, _)| Box::new(otherwise_block)),
                     },
                     range: (offset, end),
+                });
+            }
+
+            Token {
+                kind: TokenKind::Break,
+                offset,
+                origin,
+            } => {
+                self.maybe_semicolon();
+
+                return Ok(TokenTree {
+                    inner: TokenTreeInner::Break,
+                    range: (offset, offset + origin.len()),
+                });
+            }
+
+            Token {
+                kind: TokenKind::Continue,
+                offset,
+                origin,
+            } => {
+                self.maybe_semicolon();
+
+                return Ok(TokenTree {
+                    inner: TokenTreeInner::Continue,
+                    range: (offset, offset + origin.len()),
                 });
             }
 
@@ -1528,6 +1616,23 @@ impl<'de> Parser<'de> {
         }
 
         Ok(lhs)
+    }
+
+    fn parse_single_statement_or_block(&mut self) -> Result<(TokenTree<'de>, usize, usize), Error> {
+        if matches!(
+            self.lexer.peek(),
+            Some(Ok(Token {
+                kind: TokenKind::LeftBrace,
+                ..
+            }))
+        ) {
+            self.parse_block(None)
+        } else {
+            self.parse_statement_within(BindingPower::None).map(|stmt| {
+                let stmt_range = stmt.range;
+                (stmt, stmt_range.0, stmt_range.1)
+            })
+        }
     }
 }
 

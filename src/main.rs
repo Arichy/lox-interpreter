@@ -99,9 +99,10 @@ fn main() -> miette::Result<()> {
                 .into_diagnostic()
                 .wrap_err_with(|| format!("Failed to read file: {}", filename.display()))?;
 
-            let evaluator = imp::evaluate::Evaluator::new(&file_contents);
+            let mut evaluator = imp::evaluate::Evaluator::new(&file_contents);
+            let mut rt = imp::run::RuntimeState::new();
 
-            match evaluator.evaluate_expression() {
+            match evaluator.evaluate_command(&mut rt) {
                 Ok(evaluate_result) => {
                     imp::log_stdout!("{evaluate_result}");
                 }

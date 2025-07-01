@@ -96,4 +96,13 @@ pub enum RuntimeError {
         #[label = "here"]
         err_span: SourceSpan,
     },
+
+    #[error("SyntaxError: {cause} must be inside a loop")]
+    BreakOrContinueOutsideLoop {
+        #[source_code]
+        src: String,
+        cause: String,
+        #[label = "here"]
+        err_span: SourceSpan,
+    },
 }
