@@ -155,7 +155,9 @@ impl<'de> Parser<'de> {
                 Ok(Some(statement)) => {
                     statements.push(statement);
                 }
-                Ok(None) => break,
+                Ok(None) => {
+                    break;
+                }
                 Err(err) => {
                     return Err(err);
                 }
@@ -248,43 +250,44 @@ impl<'de> Parser<'de> {
 
         let peek = self.lexer.peek();
 
-        match peek {
+        let is_peek_right_paren = matches!(
+            peek,
             Some(Ok(Token {
                 kind: TokenKind::RightParen,
-                offset,
                 ..
-            })) => Ok((arguments, offset + 1)),
+            }))
+        );
 
-            _ => {
-                let mut end;
+        if is_peek_right_paren {
+            let right_paren = self.lexer.next().expect("checked in match arm")?;
+            return Ok((arguments, right_paren.offset + 1));
+        }
 
-                loop {
-                    let argument = self
-                        .parse_expression_within(BindingPower::None)
-                        .wrap_err_with(|| {
-                            format!("in argument #{} of function call", arguments.len() + 1)
-                        })?
-                        .expect("checked by the match arm");
+        let mut end;
 
-                    arguments.push(argument);
+        loop {
+            let argument = self
+                .parse_expression_within(BindingPower::None)
+                .wrap_err_with(|| format!("in argument #{} of function call", arguments.len() + 1))?
+                .expect("checked by the match arm");
 
-                    let token = self
-                        .lexer
-                        .expect_where(
-                            |token| matches!(token.kind, TokenKind::RightParen | TokenKind::Comma),
-                            "continuing argument list",
-                        )
-                        .wrap_err("in argument list of function call")?;
-                    end = token.offset;
+            arguments.push(argument);
 
-                    if token.kind == TokenKind::RightParen {
-                        break;
-                    }
-                }
+            let token = self
+                .lexer
+                .expect_where(
+                    |token| matches!(token.kind, TokenKind::RightParen | TokenKind::Comma),
+                    "continuing argument list",
+                )
+                .wrap_err("in argument list of function call")?;
+            end = token.offset;
 
-                Ok((arguments, end + 1))
+            if token.kind == TokenKind::RightParen {
+                break;
             }
         }
+
+        Ok((arguments, end + 1))
     }
 
     // return position of semicolon
@@ -430,11 +433,16 @@ impl<'de> Parser<'de> {
 
                 match &falsy_branch {
                     Some(fb) => match fb.inner {
-                        StatementInner::Block(_) | StatementInner::Expression(_) => {}
+                        StatementInner::Block(_)
+                        | StatementInner::Expression(_)
+                        | StatementInner::Break
+                        | StatementInner::Continue
+                        | StatementInner::If(_) => {}
+
                         _ => {
                             return Err(error::SyntaxError {
                                 src: self.whole.to_string(),
-                                message: "else statement body must be a block or an expression"
+                                message: "else statement body cannot be this kind of statement"
                                     .to_string(),
                                 err_span: (fb.range.0..fb.range.1).into(),
                             }

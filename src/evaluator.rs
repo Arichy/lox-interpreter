@@ -1,16 +1,20 @@
 use core::fmt;
-use std::{borrow::Cow, ops::Deref, rc::Rc};
+use std::{borrow::Cow, cell::RefCell, collections::HashMap, ops::Deref, rc::Rc};
 
 use miette::{Error, LabeledSpan, SourceSpan};
 
 use crate::{
     ast::{
-        AssignmentExpression, Expression, ExpressionInner, Identifier, LiteralInner, Op, TokenTree,
+        AssignmentExpression, BlockStatement, Expression, ExpressionInner, Identifier,
+        LiteralInner, Op, TokenTree,
     },
     error,
     runner::RuntimeState,
     Parser,
 };
+
+unsafe impl Send for Value<'_> {}
+unsafe impl Sync for Value<'_> {}
 
 /// Represents the result on stack or expression evaluation (temporary value).
 /// Using `Rc` allows us to share the result without copying the data.
@@ -20,12 +24,45 @@ pub struct Value<'de> {
     inner: Rc<ValueInner<'de>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
+pub struct NativeFunction<'de> {
+    pub name: String,
+    pub fn_ptr: fn(&[Value<'de>]) -> Result<Value<'de>, Error>,
+}
+
+impl fmt::Display for NativeFunction<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "function {}() {{
+            [native code]
+        }}",
+            self.name
+        )
+    }
+}
+
+#[derive(Debug)]
 pub enum ValueInner<'de> {
     String(Cow<'de, str>),
     Number(f64),
     Nil,
     Bool(bool),
+    Function(Function<'de>),
+    Object(RefCell<Object<'de>>),
+    NativeFunction(NativeFunction<'de>),
+}
+
+#[derive(Debug)]
+pub struct Function<'de> {
+    pub name: String,
+    pub parameters: Vec<Identifier<'de>>,
+    pub body: BlockStatement<'de>,
+}
+
+#[derive(Debug)]
+pub struct Object<'de> {
+    pub properties: HashMap<String, Value<'de>>,
 }
 
 impl<'de> ValueInner<'de> {
@@ -62,6 +99,35 @@ impl<'de> Value<'de> {
             inner: Rc::new(ValueInner::Bool(boolean)),
         }
     }
+
+    pub fn new_function(
+        name: String,
+        parameters: Vec<Identifier<'de>>,
+        body: BlockStatement<'de>,
+    ) -> Self {
+        Self {
+            inner: Rc::new(ValueInner::Function(Function {
+                name,
+                parameters,
+                body,
+            })),
+        }
+    }
+
+    pub fn new_object(properties: HashMap<String, Value<'de>>) -> Self {
+        Self {
+            inner: Rc::new(ValueInner::Object(RefCell::new(Object { properties }))),
+        }
+    }
+
+    pub fn new_native_function(
+        name: String,
+        fn_ptr: fn(&[Value<'de>]) -> Result<Value<'de>, Error>,
+    ) -> Self {
+        Self {
+            inner: Rc::new(ValueInner::NativeFunction(NativeFunction { name, fn_ptr })),
+        }
+    }
 }
 
 impl fmt::Display for Value<'_> {
@@ -71,6 +137,25 @@ impl fmt::Display for Value<'_> {
             ValueInner::Nil => write!(f, "nil"),
             ValueInner::Number(num) => write!(f, "{}", num),
             ValueInner::String(string) => write!(f, "{}", string),
+            ValueInner::Function(func) => {
+                write!(
+                    f,
+                    "Function(name: {}, parameters: {:?})",
+                    func.name, func.parameters
+                )
+            }
+            ValueInner::Object(object) => {
+                let properties: Vec<String> = object
+                    .borrow()
+                    .properties
+                    .iter()
+                    .map(|(key, value)| format!("{}: {}", key, value))
+                    .collect();
+                write!(f, "Object({})", properties.join(", "))
+            }
+            ValueInner::NativeFunction(native_func) => {
+                write!(f, "{}", native_func)
+            }
         }
     }
 }
@@ -162,31 +247,34 @@ impl<'de> Evaluator<'de> {
             //     _ => unreachable!("Only `=` operator is supported for assignment currently"),
             // },
             ExpressionInner::Binary(binary_expr) => {
-                let left_value = self.evaluate_expression(&binary_expr.left, state)?;
-                let right_value = self.evaluate_expression(&binary_expr.right, state)?;
-
                 match binary_expr.operator {
-                    Op::Plus => match (&*left_value, &*right_value) {
-                        (ValueInner::Number(left_num), ValueInner::Number(right_num)) => {
-                            // I don't know why it cannot infer the Ok type here.
-                            Ok::<Value<'de>, Error>(Value::new_number(left_num + right_num))
-                        }
-                        (ValueInner::String(left_str), ValueInner::String(right_str)) => {
-                            Ok(Value::new_string(left_str.clone() + right_str.clone()))
-                        }
-
-                        _ => {
-                            return Err(error::RuntimeError::BadOperandError {
-                                src: self.whole.to_string(),
-                                operator: binary_expr.operator.to_string(),
-                                reason: "operands must be both numbers or strings".to_string(),
-                                err_span: binary_expr.range.into(),
+                    Op::Plus => {
+                        let left_value = self.evaluate_expression(&binary_expr.left, state)?;
+                        let right_value = self.evaluate_expression(&binary_expr.right, state)?;
+                        match (&*left_value, &*right_value) {
+                            (ValueInner::Number(left_num), ValueInner::Number(right_num)) => {
+                                // I don't know why it cannot infer the Ok type here.
+                                Ok::<Value<'de>, Error>(Value::new_number(left_num + right_num))
                             }
-                            .into());
+                            (ValueInner::String(left_str), ValueInner::String(right_str)) => {
+                                Ok(Value::new_string(left_str.clone() + right_str.clone()))
+                            }
+
+                            _ => {
+                                return Err(error::RuntimeError::BadOperandError {
+                                    src: self.whole.to_string(),
+                                    operator: binary_expr.operator.to_string(),
+                                    reason: "operands must be both numbers or strings".to_string(),
+                                    err_span: binary_expr.range.into(),
+                                }
+                                .into());
+                            }
                         }
-                    },
+                    }
 
                     Op::Minus | Op::Star | Op::Slash => {
+                        let left_value = self.evaluate_expression(&binary_expr.left, state)?;
+                        let right_value = self.evaluate_expression(&binary_expr.right, state)?;
                         if let (ValueInner::Number(left_num), ValueInner::Number(right_num)) =
                             (&*left_value, &*right_value)
                         {
@@ -219,6 +307,8 @@ impl<'de> Evaluator<'de> {
                     }
 
                     Op::Greater | Op::GreaterEqual | Op::Less | Op::LessEqual => {
+                        let left_value = self.evaluate_expression(&binary_expr.left, state)?;
+                        let right_value = self.evaluate_expression(&binary_expr.right, state)?;
                         if let (ValueInner::Number(left_num), ValueInner::Number(right_num)) =
                             (&*left_value, &*right_value)
                         {
@@ -242,6 +332,8 @@ impl<'de> Evaluator<'de> {
                     }
 
                     Op::EqualEqual | Op::BangEqual => {
+                        let left_value = self.evaluate_expression(&binary_expr.left, state)?;
+                        let right_value = self.evaluate_expression(&binary_expr.right, state)?;
                         let result = match (&*left_value, &*right_value) {
                             (ValueInner::Number(left_num), ValueInner::Number(right_num)) => {
                                 match binary_expr.operator {
@@ -315,6 +407,72 @@ impl<'de> Evaluator<'de> {
                         }
                     }
 
+                    Op::Field => {
+                        let object_value = self.evaluate_expression(&binary_expr.left, state)?;
+
+                        match &*object_value {
+                            ValueInner::Object(object) => {
+                                let object = object.borrow();
+                                // let property = self
+                                //     .evaluate_expression(&binary_expr.right, state)?
+                                //     .to_string();
+
+                                let property_name = match &binary_expr.right.inner {
+                                    ExpressionInner::Identifier(ident) => {
+                                        // If the property is an identifier, we can use its name directly
+                                        if ident.name.is_empty() {
+                                            return Err(error::RuntimeError::BadOperandError {
+                                                src: self.whole.to_string(),
+                                                operator: "member access".to_string(),
+                                                reason: "Property name cannot be empty".to_string(),
+                                                err_span: expr.range.into(),
+                                            }
+                                            .into());
+                                        }
+                                        ident.name.to_string()
+                                    }
+
+                                    expr => {
+                                        let expr = match expr {
+                                            ExpressionInner::Assignment(a) => a.to_string(),
+                                            ExpressionInner::Binary(b) => b.to_string(),
+                                            ExpressionInner::Call(c) => c.to_string(),
+                                            ExpressionInner::Literal(l) => l.to_string(),
+                                            ExpressionInner::Unary(u) => u.to_string(),
+                                            ExpressionInner::Group(g) => g.to_string(),
+                                            ExpressionInner::Member(m) => m.to_string(),
+                                            ExpressionInner::Identifier(i) => i.to_string(),
+                                        };
+
+                                        return Err(error::RuntimeError::BadOperandError {
+                                            src: self.whole.to_string(),
+                                            operator: "member access".to_string(),
+                                            reason: format!("{} is not a valid property", expr),
+                                            err_span: binary_expr.right.range.into(),
+                                        }
+                                        .into());
+                                    }
+                                };
+
+                                if let Some(property_value) = object.properties.get(&property_name)
+                                {
+                                    Ok(property_value.clone())
+                                } else {
+                                    Ok(Value::new_nil())
+                                }
+                            }
+
+                            _ => {
+                                return Err(error::RuntimeError::BadOperandError {
+                                    src: self.whole.to_string(),
+                                    operator: "member access".to_string(),
+                                    reason: format!("{} is not an object", object_value),
+                                    err_span: expr.range.into(),
+                                }
+                                .into());
+                            }
+                        }
+                    }
                     _ => {
                         todo!()
                     }
@@ -358,6 +516,86 @@ impl<'de> Evaluator<'de> {
                     _ => unreachable!(
                         "Only `-` and `!` operators are supported for unary expressions"
                     ),
+                }
+            }
+
+            ExpressionInner::Call(call_expr) => {
+                let callee_value = self.evaluate_expression(&call_expr.callee, state)?;
+                let mut arguments = Vec::new();
+                for arg in &call_expr.arguments {
+                    let arg_value = self.evaluate_expression(arg, state)?;
+                    arguments.push(arg_value);
+                }
+                match &*callee_value {
+                    ValueInner::Function(func) => {
+                        if func.parameters.len() != arguments.len() {
+                            return Err(error::RuntimeError::BadOperandError {
+                                src: self.whole.to_string(),
+                                operator: "call".to_string(),
+                                reason: format!(
+                                    "Expected {} arguments, but got {}",
+                                    func.parameters.len(),
+                                    arguments.len()
+                                ),
+                                err_span: expr.range.into(),
+                            }
+                            .into());
+                        }
+
+                        state.push_stack_frame();
+
+                        let current_stack_frame = state.current_stack_frame_mut();
+
+                        for (param, arg) in func.parameters.iter().zip(arguments) {
+                            current_stack_frame
+                                .current_scope_mut()
+                                .set_variable_value(param.to_string(), arg);
+                        }
+
+                        todo!()
+                    }
+
+                    ValueInner::NativeFunction(native_func) => {
+                        let ret = (native_func.fn_ptr)(&arguments);
+                        Ok(ret?)
+                    }
+
+                    _ => {
+                        return Err(error::RuntimeError::BadOperandError {
+                            src: self.whole.to_string(),
+                            operator: "call".to_string(),
+                            reason: "Callee must be a function".to_string(),
+                            err_span: expr.range.into(),
+                        }
+                        .into())
+                    }
+                }
+            }
+
+            ExpressionInner::Member(member) => {
+                let object_value = self.evaluate_expression(&member.object, state)?;
+
+                match &*object_value {
+                    ValueInner::Object(object) => {
+                        let object = object.borrow();
+                        let property = self.evaluate_expression(&member.object, state)?.to_string();
+
+                        if let Some(property_value) = object.properties.get(&property) {
+                            Ok(property_value.clone())
+                        } else {
+                            Ok(Value::new_nil())
+                        }
+                    }
+
+                    _ => {
+                        return Err(error::RuntimeError::BadOperandError {
+                            src: self.whole.to_string(),
+                            operator: "member access".to_string(),
+                            reason: format!("{} is not an object", object_value),
+                            err_span: expr.range.into(),
+                        }
+                        .into());
+                    }
                 }
             }
 

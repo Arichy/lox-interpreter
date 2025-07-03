@@ -325,7 +325,7 @@ impl fmt::Display for CallExpression<'_> {
 #[derive(Debug, Clone, PartialEq)]
 pub struct MemberExpressionInner<'de> {
     pub object: Box<Expression<'de>>,
-    pub property: Token<'de>,
+    pub property: Box<Expression<'de>>,
 }
 pub type MemberExpression<'de> = Spanned<MemberExpressionInner<'de>>;
 impl fmt::Display for MemberExpression<'_> {

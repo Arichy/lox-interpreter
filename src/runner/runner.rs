@@ -1,5 +1,6 @@
-use std::collections::HashMap;
+use std::{borrow::Cow, collections::HashMap};
 
+use chrono::Utc;
 use miette::{miette, Error, LabeledSpan};
 
 use crate::{
@@ -8,6 +9,8 @@ use crate::{
     },
     error,
     evaluator::{Evaluator, Value, ValueInner},
+    log_stdout,
+    runner::global::{self, console},
 };
 
 #[derive(Debug, Default)]
@@ -98,6 +101,18 @@ impl<'de> RuntimeState<'de> {
         }
     }
 
+    pub fn push_stack_frame(&mut self) {
+        self.stack.push(StackFrame::new());
+    }
+
+    pub fn pop_stack_frame(&mut self) {
+        if self.stack.len() > 1 {
+            self.stack.pop();
+        } else {
+            panic!("Cannot pop the last stack frame");
+        }
+    }
+
     pub fn current_stack_frame(&self) -> &StackFrame<'de> {
         self.stack.last().expect("No stack frame")
     }
@@ -131,6 +146,36 @@ impl<'de> RuntimeState<'de> {
             .current_scope_mut()
             .set_variable_value(variable, value);
     }
+
+    fn set_global_variable(&mut self, variable: String, value: Value<'de>) {
+        if let Some(scope) = self.stack.first_mut() {
+            scope
+                .current_scope_mut()
+                .set_variable_value(variable, value);
+        } else {
+            // If no stack frame exists, create one
+            let mut new_frame = StackFrame::new();
+            new_frame
+                .current_scope_mut()
+                .set_variable_value(variable, value);
+            self.stack.push(new_frame);
+        }
+    }
+
+    fn init_global(&mut self) {
+        self.set_global_variable(
+            "hi".to_string(),
+            Value::new_string(Cow::Owned("Hello, World!".to_string())),
+        );
+
+        self.set_global_variable(
+            "clock".to_string(),
+            Value::new_native_function("clock".to_string(), global::clock),
+        );
+
+        let console = global::Console::new();
+        self.set_global_variable("console".to_string(), console);
+    }
 }
 
 pub struct Runner<'de> {
@@ -141,7 +186,8 @@ pub struct Runner<'de> {
 impl<'de> Runner<'de> {
     pub fn new(input: &'de str) -> Self {
         let evaluator = Evaluator::new(input);
-        let state = RuntimeState::new();
+        let mut state = RuntimeState::new();
+        state.init_global();
         Self { evaluator, state }
     }
 
@@ -237,6 +283,21 @@ impl<'de> Runner<'de> {
 
                     self.state.new_variable(variable_name, init);
                 }
+                DeclarationInner::Function(func_declaration) => {
+                    let function_name = func_declaration.name.to_string();
+                    let function_value = Value::new_function(
+                        function_name.clone(),
+                        func_declaration.parameters.clone(),
+                        *func_declaration.body.clone(),
+                    );
+
+                    // Register the function in the current scope
+                    self.state
+                        .current_stack_frame_mut()
+                        .current_scope_mut()
+                        .set_variable_value(function_name, function_value);
+                }
+
                 _ => {
                     todo!("function and class declarations are not yet implemented");
                 }
@@ -318,21 +379,7 @@ impl<'de> Runner<'de> {
 
             StatementInner::Print(expr) => {
                 let value = self.run_expression(expr)?;
-
-                match &*value {
-                    ValueInner::String(s) => {
-                        crate::log_stdout!("{}", s);
-                    }
-                    ValueInner::Number(n) => {
-                        crate::log_stdout!("{}", n);
-                    }
-                    ValueInner::Bool(b) => {
-                        crate::log_stdout!("{}", b);
-                    }
-                    ValueInner::Nil => {
-                        crate::log_stdout!("null");
-                    }
-                }
+                log_stdout!("{value}");
             }
 
             StatementInner::While(while_statement) => {
