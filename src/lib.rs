@@ -1,14 +1,16 @@
 #![allow(unused)]
 
-pub mod lex;
-pub use lex::Lexer;
+pub mod lexer;
+pub use lexer::Lexer;
 
-pub mod parse;
-pub use parse::Parser;
+pub mod parser;
+pub use parser::Parser;
 
-pub mod evaluate;
+mod ast;
 
-pub mod run;
+pub mod evaluator;
+
+pub mod runner;
 
 pub mod error;
 

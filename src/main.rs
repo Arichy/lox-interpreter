@@ -2,8 +2,7 @@
 
 use clap::{Parser, Subcommand};
 use codecrafters_interpreter as imp;
-use codecrafters_interpreter::evaluate;
-use codecrafters_interpreter::parse::TokenTree;
+use imp::{evaluator, runner};
 use miette::IntoDiagnostic;
 use miette::WrapErr;
 use std::fs;
@@ -99,8 +98,8 @@ fn main() -> miette::Result<()> {
                 .into_diagnostic()
                 .wrap_err_with(|| format!("Failed to read file: {}", filename.display()))?;
 
-            let mut evaluator = imp::evaluate::Evaluator::new(&file_contents);
-            let mut rt = imp::run::RuntimeState::new();
+            let mut evaluator = evaluator::Evaluator::new(&file_contents);
+            let mut rt = runner::RuntimeState::new();
 
             match evaluator.evaluate_command(&mut rt) {
                 Ok(evaluate_result) => {
@@ -118,7 +117,7 @@ fn main() -> miette::Result<()> {
                 .into_diagnostic()
                 .wrap_err_with(|| format!("Failed to read file: {}", filename.display()))?;
 
-            let runner = imp::run::Runner::new(&file_contents);
+            let runner = runner::Runner::new(&file_contents);
 
             if let Err(e) = runner.run() {
                 imp::log_stderr!("{e:?}");

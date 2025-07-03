@@ -1,10 +1,7 @@
 use miette::{Diagnostic, LabeledSpan, SourceSpan};
 use thiserror::Error;
 
-use crate::{
-    error::owned::OwnedTokenTree,
-    parse::{Op, TokenTree, TokenTreeInner},
-};
+// use crate::error::owned::OwnedTokenTree;
 
 pub mod owned;
 
@@ -16,6 +13,14 @@ pub struct Eof {
 
     #[label = "unexpected EOF"]
     pub err_span: SourceSpan,
+}
+impl Eof {
+    pub fn new(src: &str) -> Self {
+        Self {
+            src: src.to_string(),
+            err_span: SourceSpan::from((src.len() - 1, src.len() - 1)),
+        }
+    }
 }
 
 #[derive(Diagnostic, Debug, Error)]
@@ -64,17 +69,17 @@ pub struct SyntaxError {
     pub err_span: SourceSpan,
 }
 
-#[derive(Diagnostic, Debug, Error)]
-#[error("Unexpected token tree")]
-pub struct UnexpectedTokenTree {
-    #[source_code]
-    pub src: String,
+// #[derive(Diagnostic, Debug, Error)]
+// #[error("Unexpected token tree")]
+// pub struct UnexpectedTokenTree {
+//     #[source_code]
+//     pub src: String,
 
-    pub token_tree: OwnedTokenTree,
+//     pub token_tree: OwnedTokenTree,
 
-    #[label]
-    pub err_span: SourceSpan,
-}
+//     #[label]
+//     pub err_span: SourceSpan,
+// }
 
 #[derive(Diagnostic, Debug, Error)]
 pub enum RuntimeError {
