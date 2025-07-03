@@ -5,10 +5,11 @@ use miette::{Error, LabeledSpan, SourceSpan};
 
 use crate::{
     ast::{
-        AssignmentExpression, BlockStatement, Expression, ExpressionInner, Identifier,
-        LiteralInner, Op, TokenTree,
+        AssignmentExpression, BlockStatement, Declaration, DeclarationInner, Expression,
+        ExpressionInner, ForInit, ForInitInner, Identifier, LiteralInner, Op, Statement,
+        StatementInner, TokenTree,
     },
-    error,
+    error, log_stdout,
     runner::RuntimeState,
     Parser,
 };
@@ -546,13 +547,28 @@ impl<'de> Evaluator<'de> {
 
                         let current_stack_frame = state.current_stack_frame_mut();
 
+                        // Add the function itself to the new scope for recursion
+                        current_stack_frame
+                            .current_scope_mut()
+                            .set_variable_value(func.name.clone(), callee_value.clone());
+
                         for (param, arg) in func.parameters.iter().zip(arguments) {
                             current_stack_frame
                                 .current_scope_mut()
                                 .set_variable_value(param.to_string(), arg);
                         }
 
-                        todo!()
+                        // Execute function body - handle BlockStatement directly
+                        state.current_stack_frame_mut().push_scope(false);
+                        for stmt in &func.body.statements {
+                            self.run_statement(stmt, state)?;
+                        }
+                        state.current_stack_frame_mut().pop_scope();
+
+                        state.pop_stack_frame();
+
+                        // Functions return nil by default (return statement support can be added later)
+                        Ok(Value::new_nil())
                     }
 
                     ValueInner::NativeFunction(native_func) => {
@@ -603,5 +619,251 @@ impl<'de> Evaluator<'de> {
                 todo!()
             }
         }
+    }
+
+    pub fn run_statement(
+        &mut self,
+        statement: &Statement<'de>,
+        state: &mut RuntimeState<'de>,
+    ) -> Result<(), Error> {
+        if self.check_should_continue(state) || self.check_should_break(state) {
+            return Ok(());
+        }
+
+        match &statement.inner {
+            StatementInner::Block(block) => {
+                state.current_stack_frame_mut().push_scope(false);
+                for stmt in &block.statements {
+                    self.run_statement(stmt, state)?;
+                }
+                state.current_stack_frame_mut().pop_scope();
+            }
+            StatementInner::Break => {
+                let scopes = state.current_stack_frame_mut().scopes_mut();
+
+                for scope in scopes.iter_mut().rev() {
+                    if scope.is_loop {
+                        scope.should_break = true;
+                        return Ok(());
+                    }
+                }
+
+                return Err(error::RuntimeError::BreakOrContinueOutsideLoop {
+                    src: self.whole.to_string(),
+                    cause: "break".to_string(),
+                    err_span: (statement.range.0..statement.range.1).into(),
+                }
+                .into());
+            }
+            StatementInner::Continue => {
+                let scopes = state.current_stack_frame().scopes();
+
+                for scope in scopes.iter().rev() {
+                    if scope.is_loop {
+                        return Ok(());
+                    }
+                }
+
+                return Err(error::RuntimeError::BreakOrContinueOutsideLoop {
+                    src: self.whole.to_string(),
+                    cause: "continue".to_string(),
+                    err_span: (statement.range.0..statement.range.1).into(),
+                }
+                .into());
+            }
+            StatementInner::Declaration(decl) => match &decl.inner {
+                DeclarationInner::Variable(variable_declaration) => {
+                    let variable_name = variable_declaration.id.to_string();
+                    let init = match &variable_declaration.init {
+                        Some(init) => self.evaluate_expression(init, state)?,
+                        None => {
+                            // If no initializer is provided, we set the variable to nil
+                            Value::new_nil()
+                        }
+                    };
+
+                    state.new_variable(variable_name, init);
+                }
+                DeclarationInner::Function(func_declaration) => {
+                    let function_name = func_declaration.name.to_string();
+                    let function_value = Value::new_function(
+                        function_name.clone(),
+                        func_declaration.parameters.clone(),
+                        *func_declaration.body.clone(),
+                    );
+
+                    // Register the function in the current scope
+                    state
+                        .current_stack_frame_mut()
+                        .current_scope_mut()
+                        .set_variable_value(function_name, function_value);
+                }
+
+                _ => {
+                    todo!("function and class declarations are not yet implemented");
+                }
+            },
+
+            StatementInner::Expression(expr) => {
+                self.evaluate_expression(expr, state).map_err(|e| {
+                    error::RuntimeError::BadOperandError {
+                        src: self.whole.to_string(),
+                        operator: "expression".to_string(),
+                        reason: e.to_string(),
+                        err_span: (statement.range.0..statement.range.1).into(),
+                    }
+                })?;
+            }
+
+            StatementInner::For(for_statement) => {
+                state.current_stack_frame_mut().push_scope(true);
+
+                if let Some(init) = &for_statement.init {
+                    self.run_for_init(&init, state)?;
+                }
+
+                match &for_statement.body.inner {
+                    StatementInner::Block(block) => {
+                        while for_statement
+                            .test
+                            .as_ref()
+                            .map(|c| self.check_loop_condition(c, state))
+                            .unwrap_or(Ok(true))?
+                        {
+                            /// @XXX: a new scope is created for each iteration
+                            state.current_stack_frame_mut().push_scope(false);
+                            for statement in &block.statements {
+                                self.run_statement(statement, state)?;
+                            }
+                            state.current_stack_frame_mut().pop_scope();
+
+                            if let Some(update) = &for_statement.update {
+                                self.evaluate_expression(update, state)?;
+                            }
+                        }
+                    }
+
+                    single_statement => {
+                        while for_statement
+                            .test
+                            .as_ref()
+                            .map(|c| self.check_loop_condition(c, state))
+                            .unwrap_or(Ok(true))?
+                        {
+                            self.run_statement(&for_statement.body, state)?;
+
+                            if let Some(update) = &for_statement.update {
+                                self.evaluate_expression(update, state)?;
+                            }
+                        }
+                    }
+                }
+
+                state.current_stack_frame_mut().pop_scope();
+            }
+
+            StatementInner::If(if_statement) => {
+                let condition_boolean = self
+                    .evaluate_expression(&if_statement.test, state)?
+                    .boolean();
+
+                if condition_boolean {
+                    self.run_statement(&if_statement.consequent, state)?;
+                } else {
+                    // Run the 'no' branch if it exists
+                    if let Some(alternate) = &if_statement.alternate {
+                        self.run_statement(alternate, state)?;
+                    }
+                }
+            }
+
+            StatementInner::Print(expr) => {
+                let value = self.evaluate_expression(expr, state)?;
+                log_stdout!("{value}");
+            }
+
+            StatementInner::While(while_statement) => {
+                state.current_stack_frame_mut().push_scope(true);
+
+                match &while_statement.body.inner {
+                    StatementInner::Block(block) => {
+                        while self.check_loop_condition(&while_statement.test, state)? {
+                            /// @XXX: a new scope is created for each iteration
+                            state.current_stack_frame_mut().push_scope(false);
+                            for statement in &block.statements {
+                                self.run_statement(statement, state)?;
+                            }
+                            state.current_stack_frame_mut().pop_scope();
+                        }
+                    }
+
+                    single_statement => {
+                        while self.check_loop_condition(&while_statement.test, state)? {
+                            self.run_statement(&while_statement.body, state)?;
+                        }
+                    }
+                }
+
+                state.current_stack_frame_mut().pop_scope();
+            }
+
+            _ => {
+                todo!()
+            }
+        }
+
+        Ok(())
+    }
+
+    fn run_for_init(
+        &mut self,
+        init: &ForInit<'de>,
+        state: &mut RuntimeState<'de>,
+    ) -> Result<(), Error> {
+        match &init.inner {
+            ForInitInner::VariableDeclaration(variable_declaration) => {
+                let variable_name = variable_declaration.id.to_string();
+                let init_value = match &variable_declaration.init {
+                    Some(init) => self.evaluate_expression(init, state)?,
+                    None => Value::new_nil(),
+                };
+
+                state.new_variable(variable_name, init_value);
+            }
+            ForInitInner::Expression(expr) => {
+                self.evaluate_expression(expr, state).map_err(|e| {
+                    error::RuntimeError::BadOperandError {
+                        src: self.whole.to_string(),
+                        operator: "for init expression".to_string(),
+                        reason: e.to_string(),
+                        err_span: (init.range.0..init.range.1).into(),
+                    }
+                })?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn check_should_continue(&self, state: &RuntimeState<'de>) -> bool {
+        state
+            .current_stack_frame()
+            .nearest_enclosing_loop_scope()
+            .map_or(false, |scope| scope.should_continue)
+    }
+
+    fn check_should_break(&self, state: &RuntimeState<'de>) -> bool {
+        state
+            .current_stack_frame()
+            .nearest_enclosing_loop_scope()
+            .map_or(false, |scope| scope.should_break)
+    }
+
+    fn check_loop_condition(
+        &mut self,
+        cond: &Expression<'de>,
+        state: &mut RuntimeState<'de>,
+    ) -> Result<bool, Error> {
+        Ok(self.evaluate_expression(cond, state)?.boolean() && !self.check_should_break(state))
     }
 }

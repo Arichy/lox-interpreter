@@ -725,13 +725,14 @@ impl<'de> Parser<'de> {
                     .wrap_err_with(|| format!("in parameter list of function {name}"))?;
 
                 if matches!(
-                    self.lexer.next(),
+                    self.lexer.peek(),
                     Some(Ok(Token {
                         kind: TokenKind::RightParen,
                         ..
                     }))
                 ) {
                     // immediate parameter list end
+                    self.lexer.next(); // consume the right paren
                 } else {
                     loop {
                         let parameter = self
