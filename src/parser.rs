@@ -414,6 +414,36 @@ impl<'de> Parser<'de> {
                         falsy_branch_statement.range.1
                     });
 
+                // validate AST
+                match truthy_branch.inner {
+                    StatementInner::Block(_) | StatementInner::Expression(_) => {}
+                    _ => {
+                        return Err(error::SyntaxError {
+                            src: self.whole.to_string(),
+                            message: "if statement body must be a block or an expression"
+                                .to_string(),
+                            err_span: (truthy_branch.range.0..truthy_branch.range.1).into(),
+                        }
+                        .into());
+                    }
+                }
+
+                match &falsy_branch {
+                    Some(fb) => match fb.inner {
+                        StatementInner::Block(_) | StatementInner::Expression(_) => {}
+                        _ => {
+                            return Err(error::SyntaxError {
+                                src: self.whole.to_string(),
+                                message: "else statement body must be a block or an expression"
+                                    .to_string(),
+                                err_span: (fb.range.0..fb.range.1).into(),
+                            }
+                            .into());
+                        }
+                    },
+                    None => {}
+                }
+
                 let range = (start.offset, end);
 
                 Statement {
@@ -528,6 +558,19 @@ impl<'de> Parser<'de> {
                     .wrap_err("in body of for loop")?;
 
                 let range = (offset, body.range.1);
+
+                // validate AST
+                match &body.inner {
+                    StatementInner::Block(_) | StatementInner::Expression(_) => {}
+                    _ => {
+                        return Err(error::SyntaxError {
+                            src: self.whole.to_string(),
+                            message: "for loop body must be a block or an expression".to_string(),
+                            err_span: (body.range.0..body.range.1).into(),
+                        }
+                        .into());
+                    }
+                }
 
                 Statement {
                     inner: StatementInner::For(ForStatement {
