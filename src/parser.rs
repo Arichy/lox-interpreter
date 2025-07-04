@@ -201,6 +201,7 @@ impl<'de> Parser<'de> {
                 inner: BlockStatementInner { statements },
                 range: (left_brace.offset, end),
             };
+            self.lexer.next(); // consume the right brace
             return Ok(block);
         }
 
@@ -482,7 +483,7 @@ impl<'de> Parser<'de> {
                     .parse_expression_within_expected(BindingPower::None)
                     .wrap_err("in condition of while loop")?;
 
-                let left_brace_token = self
+                let right_paren_token = self
                     .lexer
                     .expect(TokenKind::RightParen, "missing )")
                     .wrap_err("in while loop condition")?;
