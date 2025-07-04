@@ -51,12 +51,14 @@ impl<'de> Scope<'de> {
 #[derive(Debug, Default)]
 pub struct StackFrame<'de> {
     scopes: Vec<Scope<'de>>,
+    pub return_value: Option<Value<'de>>,
 }
 
 impl<'de> StackFrame<'de> {
     pub fn new() -> Self {
         Self {
             scopes: vec![Scope::new(false)],
+            return_value: None,
         }
     }
 
@@ -122,22 +124,26 @@ impl<'de> RuntimeState<'de> {
     }
 
     pub fn get_variable_value(&self, variable: &str) -> Option<&Value<'de>> {
-        let current_stack_frame = self.current_stack_frame();
-        for scope in current_stack_frame.scopes().iter().rev() {
-            if let Some(value) = scope.get_variable_value(variable) {
-                return Some(value);
+        for stack_frame in self.stack.iter().rev() {
+            for scope in stack_frame.scopes.iter().rev() {
+                if let Some(value) = scope.get_variable_value(variable) {
+                    return Some(value);
+                }
             }
         }
+
         None
     }
 
     pub fn get_variable_value_mut(&mut self, variable: &str) -> Option<&mut Value<'de>> {
-        let current_stack_frame = self.current_stack_frame_mut();
-        for scope in current_stack_frame.scopes.iter_mut().rev() {
-            if let Some(value) = scope.get_variable_value_mut(variable) {
-                return Some(value);
+        for stack_frame in self.stack.iter_mut().rev() {
+            for scope in stack_frame.scopes.iter_mut().rev() {
+                if let Some(value) = scope.get_variable_value_mut(variable) {
+                    return Some(value);
+                }
             }
         }
+
         None
     }
 

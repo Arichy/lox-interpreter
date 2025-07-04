@@ -563,12 +563,15 @@ impl<'de> Evaluator<'de> {
                         for stmt in &func.body.statements {
                             self.run_statement(stmt, state)?;
                         }
+
+                        let return_value = state.current_stack_frame().return_value.clone();
+
                         state.current_stack_frame_mut().pop_scope();
 
                         state.pop_stack_frame();
 
                         // Functions return nil by default (return statement support can be added later)
-                        Ok(Value::new_nil())
+                        Ok(return_value.clone().unwrap_or_else(|| Value::new_nil()))
                     }
 
                     ValueInner::NativeFunction(native_func) => {
@@ -626,7 +629,10 @@ impl<'de> Evaluator<'de> {
         statement: &Statement<'de>,
         state: &mut RuntimeState<'de>,
     ) -> Result<(), Error> {
-        if self.check_should_continue(state) || self.check_should_break(state) {
+        if self.check_should_continue(state)
+            || self.check_should_break(state)
+            || self.check_should_return(state)
+        {
             return Ok(());
         }
 
@@ -782,6 +788,16 @@ impl<'de> Evaluator<'de> {
                 log_stdout!("{value}");
             }
 
+            StatementInner::Return(return_statement) => {
+                let return_value = if let Some(expr) = &return_statement {
+                    self.evaluate_expression(expr, state)?
+                } else {
+                    Value::new_nil()
+                };
+
+                state.current_stack_frame_mut().return_value = Some(return_value);
+            }
+
             StatementInner::While(while_statement) => {
                 state.current_stack_frame_mut().push_scope(true);
 
@@ -857,6 +873,10 @@ impl<'de> Evaluator<'de> {
             .current_stack_frame()
             .nearest_enclosing_loop_scope()
             .map_or(false, |scope| scope.should_break)
+    }
+
+    fn check_should_return(&self, state: &RuntimeState<'de>) -> bool {
+        state.current_stack_frame().return_value.is_some()
     }
 
     fn check_loop_condition(

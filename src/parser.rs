@@ -322,8 +322,7 @@ impl<'de> Parser<'de> {
         );
 
         if is_expr {
-            // let expr = self.parse_expression()?;
-            let Ok(Some(expr)) = self.parse_expression() else {
+            let Some(expr) = self.parse_expression()? else {
                 // if parse_expression returns None, it means there was an error
                 return Ok(None);
             };
@@ -419,7 +418,9 @@ impl<'de> Parser<'de> {
 
                 // validate AST
                 match truthy_branch.inner {
-                    StatementInner::Block(_) | StatementInner::Expression(_) => {}
+                    StatementInner::Block(_)
+                    | StatementInner::Expression(_)
+                    | StatementInner::Return(_) => {}
                     _ => {
                         return Err(error::SyntaxError {
                             src: self.whole.to_string(),
@@ -437,7 +438,8 @@ impl<'de> Parser<'de> {
                         | StatementInner::Expression(_)
                         | StatementInner::Break
                         | StatementInner::Continue
-                        | StatementInner::If(_) => {}
+                        | StatementInner::If(_)
+                        | StatementInner::Return(_) => {}
 
                         _ => {
                             return Err(error::SyntaxError {
@@ -688,7 +690,7 @@ impl<'de> Parser<'de> {
 
                 Statement {
                     range,
-                    inner: StatementInner::Expression(expr),
+                    inner: StatementInner::Return(Some(expr)),
                 }
             }
 
