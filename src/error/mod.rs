@@ -110,4 +110,7 @@ pub enum RuntimeError {
         #[label = "here"]
         err_span: SourceSpan,
     },
+
+    #[error("InternalError: {message}")]
+    InternalError { message: String },
 }
