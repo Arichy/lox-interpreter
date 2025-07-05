@@ -9,7 +9,10 @@ use std::{
 
 use rustc_hash::FxHashMap as HashMap;
 
-use crate::evaluator::ClosureBindingEnv;
+use crate::{
+    evaluator::ClosureBindingEnv,
+    runner::cache::{CacheKey, CallCache},
+};
 
 use chrono::Utc;
 use miette::{miette, Error, LabeledSpan, WrapErr};
@@ -21,7 +24,10 @@ use crate::{
     error,
     evaluator::{Evaluator, Value, ValueInner},
     log_stdout,
-    runner::global::{self, console},
+    runner::{
+        cache,
+        global::{self, console},
+    },
 };
 
 #[derive(Debug)]
@@ -130,6 +136,8 @@ pub struct Vm<'de> {
     pub current_env: Environment<'de>,
     call_stack: Vec<StackFrame<'de>>,
     loop_context_stack: Vec<LoopContext>,
+    // cache for pure functions
+    pub pure_function_call_cache: CallCache<'de>,
 }
 
 impl<'de> Vm<'de> {
@@ -142,6 +150,7 @@ impl<'de> Vm<'de> {
             current_env,
             call_stack: vec![],
             loop_context_stack: vec![],
+            pure_function_call_cache: HashMap::default(),
         };
 
         vm.init_global();

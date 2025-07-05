@@ -25,7 +25,7 @@ use crate::{
         Visitor, WhileStatement, WhileStatementInner,
     },
     error, log_stdout,
-    runner::{global::console, Environment, Vm},
+    runner::{cache::build_cache_key, global::console, Environment, Vm},
     Parser,
 };
 
@@ -40,7 +40,7 @@ unsafe impl Sync for Value<'_> {}
 /// So it's cheap to clone
 #[derive(Debug, Clone)]
 pub struct Value<'de> {
-    inner: Rc<ValueInner<'de>>,
+    pub(crate) inner: Rc<ValueInner<'de>>,
 }
 
 #[derive(Debug)]
@@ -79,6 +79,13 @@ pub struct Function<'de> {
     pub body: BlockStatement<'de>,
     pub closure_env: Option<Environment<'de>>,
     pub closure_binding_env: ClosureBindingEnv<'de>,
+}
+
+impl Function<'_> {
+    fn is_pure(&self) -> bool {
+        // pure function: 1. no closure bindings 2. no side effects
+        self.closure_binding_env.is_empty()
+    }
 }
 
 #[derive(Debug)]
@@ -556,6 +563,20 @@ impl<'de> Evaluator<'de> {
                             .into());
                         }
 
+                        let is_pure_function = func.closure_binding_env.is_empty();
+
+                        let mut cache_key = None;
+                        if is_pure_function {
+                            // Check the cache for the pure function call
+                            cache_key = Some(build_cache_key(&callee_value, &arguments));
+
+                            if let Some(cached_value) =
+                                vm.pure_function_call_cache.get(cache_key.as_ref().unwrap())
+                            {
+                                return Ok(cached_value.clone());
+                            }
+                        }
+
                         vm.enter_function(
                             func.closure_env.clone(),
                             func.closure_binding_env.clone(),
@@ -584,6 +605,12 @@ impl<'de> Evaluator<'de> {
                         };
 
                         vm.leave_function()?;
+
+                        // set cache
+                        if is_pure_function {
+                            vm.pure_function_call_cache
+                                .insert(cache_key.unwrap(), return_value.clone());
+                        }
 
                         return Ok(return_value);
                     }
@@ -963,6 +990,9 @@ impl<'de> Evaluator<'de> {
                 // println!("global: {globalBindings:?}");
                 // println!("local: {:?}", self.local_vars);
 
+                // @FIXME: maybe we need to remove `&& !self.vm.global.bindings.borrow().contains_key(name)`
+                // because closure_binding_env is used to tell if a function is pure.
+                // But if a global non-pure function is called, the function is not pure, but we'll regard it as pure, which is not correct.
                 // If it's not a local variable, check if it's in the environment
                 if !self.local_vars.contains(name)
                     && !self.vm.global.bindings.borrow().contains_key(name)
