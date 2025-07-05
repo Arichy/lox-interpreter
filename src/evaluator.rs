@@ -570,10 +570,18 @@ impl<'de> Evaluator<'de> {
                             self.run_statement(stmt, vm)?;
                         }
 
-                        let return_value = vm
-                            .current_stack_frame()
-                            .and_then(|frame| frame.return_value.clone())
-                            .unwrap_or_else(|| Value::new_nil());
+                        let return_value = match vm.current_stack_frame() {
+                            Ok(frame) => frame
+                                .return_value
+                                .clone()
+                                .unwrap_or_else(|| Value::new_nil()),
+                            Err(e) => {
+                                return Err(error::RuntimeError::InternalError {
+                                    message: e.to_string(),
+                                }
+                                .into());
+                            }
+                        };
 
                         vm.leave_function()?;
 
@@ -687,7 +695,7 @@ impl<'de> Evaluator<'de> {
                         }
                     };
 
-                    if let Some(current_stack_frame) = vm.current_stack_frame_mut() {
+                    if let Ok(current_stack_frame) = vm.current_stack_frame_mut() {
                         // If the variable was a closure binding, we remove it because it's being redefined
                         current_stack_frame
                             .closure_binding_env
@@ -711,7 +719,7 @@ impl<'de> Evaluator<'de> {
                         closure_binding_env,
                     );
 
-                    if let Some(current_stack_frame) = vm.current_stack_frame_mut() {
+                    if let Ok(current_stack_frame) = vm.current_stack_frame_mut() {
                         // If the variable was a closure binding, we remove it because it's being redefined
                         current_stack_frame
                             .closure_binding_env

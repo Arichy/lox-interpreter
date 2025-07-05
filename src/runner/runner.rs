@@ -12,7 +12,7 @@ use rustc_hash::FxHashMap as HashMap;
 use crate::evaluator::ClosureBindingEnv;
 
 use chrono::Utc;
-use miette::{miette, Error, LabeledSpan};
+use miette::{miette, Error, LabeledSpan, WrapErr};
 
 use crate::{
     ast::{
@@ -198,22 +198,18 @@ impl<'de> Vm<'de> {
     }
 
     pub fn leave_function(&mut self) -> Result<(), Error> {
-        if let Some(current_stack_frame) = self.current_stack_frame() {
-            // Restore the environment before the function call
-            self.current_env = current_stack_frame.env_before_call.clone();
-            // Pop the stack frame
-            self.call_stack.pop();
-            Ok(())
-        } else {
-            Err(error::RuntimeError::InternalError {
-                message: format!("Cannot leave function: no current stack frame found"),
-            }
-            .into())
-        }
+        let current_stack_frame = self.current_stack_frame().wrap_err("leaving function")?;
+        // Restore the environment before the function call
+        self.current_env = current_stack_frame.env_before_call.clone();
+        self.call_stack.pop();
+
+        Ok(())
     }
 
     pub fn get_variable(&self, name: &str) -> Option<Value<'de>> {
-        let current_stack_frame = self.current_stack_frame()?;
+        let Ok(current_stack_frame) = self.current_stack_frame() else {
+            return self.current_env.get(name);
+        };
 
         // println!(
         //     "Looking for variable: {}, current_stack_frame closure bindings: {:?}",
@@ -234,7 +230,7 @@ impl<'de> Vm<'de> {
 
     pub fn assign_variable(&mut self, name: &str, value: Value<'de>) -> bool {
         // Check the current stack frame's closure bindings first
-        let Some(current_stack_frame) = self.current_stack_frame() else {
+        let Ok(current_stack_frame) = self.current_stack_frame() else {
             return self.current_env.assign(name, value);
         };
 
@@ -245,12 +241,20 @@ impl<'de> Vm<'de> {
         self.current_env.assign(name, value)
     }
 
-    pub fn current_stack_frame(&self) -> Option<&StackFrame<'de>> {
-        self.call_stack.last()
+    pub fn current_stack_frame(&self) -> Result<&StackFrame<'de>, Error> {
+        self.call_stack.last().ok_or_else(|| {
+            miette!(error::RuntimeError::InternalError {
+                message: "No current stack frame found".to_string()
+            })
+        })
     }
 
-    pub fn current_stack_frame_mut(&mut self) -> Option<&mut StackFrame<'de>> {
-        self.call_stack.last_mut()
+    pub fn current_stack_frame_mut(&mut self) -> Result<&mut StackFrame<'de>, Error> {
+        self.call_stack.last_mut().ok_or_else(|| {
+            miette!(error::RuntimeError::InternalError {
+                message: "No current stack frame found".to_string()
+            })
+        })
     }
 
     pub fn enter_loop(&mut self) {
