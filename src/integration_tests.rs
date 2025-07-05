@@ -1,24 +1,21 @@
 #[cfg(test)]
 mod integration_tests {
-    use crate::{
-        runner::Runner,
-        start_capture, end_capture,
-    };
+    use crate::{end_capture, runner::Runner, start_capture};
 
     // Helper function to run Lox code and capture output
     fn run_lox_code(code: &str) -> Result<Vec<String>, String> {
         // Start capturing stdout
         start_capture();
-        
+
         // Create and run the interpreter
         let runner = Runner::new(code);
-        
+
         // Run the code
         let result = runner.run();
-        
+
         // Get captured output
         let (stdout, _stderr) = end_capture();
-        
+
         match result {
             Ok(_) => Ok(stdout),
             Err(e) => Err(e.to_string()),
@@ -40,9 +37,9 @@ mod integration_tests {
 var counter = makeCounter();
 counter();
 counter();"#;
-        
+
         let expected = vec!["1", "2"];
-        
+
         match run_lox_code(code) {
             Ok(result) => assert_eq!(result, expected),
             Err(e) => panic!("Test failed with error: {}", e),
@@ -64,9 +61,9 @@ fun incrementCounter(amount) {
   print counter;
 }
 print counter;"#;
-        
+
         let expected = vec!["89", "89", "89"];
-        
+
         match run_lox_code(code) {
             Ok(result) => assert_eq!(result, expected),
             Err(e) => panic!("Test failed with error: {}", e),
@@ -94,9 +91,9 @@ print counter;"#;
 
   counter1();
 }"#;
-        
+
         let expected = vec!["1", "2", "3"];
-        
+
         match run_lox_code(code) {
             Ok(result) => assert_eq!(result, expected),
             Err(e) => panic!("Test failed with error: {}", e),
@@ -107,7 +104,7 @@ print counter;"#;
     fn test_simple_print() {
         let code = r#"print "hello world";"#;
         let expected = vec!["hello world"];
-        
+
         match run_lox_code(code) {
             Ok(result) => assert_eq!(result, expected),
             Err(e) => panic!("Test failed with error: {}", e),
@@ -121,7 +118,7 @@ print x;
 x = 10;
 print x;"#;
         let expected = vec!["5", "10"];
-        
+
         match run_lox_code(code) {
             Ok(result) => assert_eq!(result, expected),
             Err(e) => panic!("Test failed with error: {}", e),
@@ -140,9 +137,9 @@ print x;"#;
 var add5 = makeAdder(5);
 print add5(3);
 print add5(7);"#;
-        
+
         let expected = vec!["8", "12"];
-        
+
         match run_lox_code(code) {
             Ok(result) => assert_eq!(result, expected),
             Err(e) => panic!("Test failed with error: {}", e),
@@ -165,9 +162,9 @@ print add5(7);"#;
 var inc = makeCounters();
 inc();
 inc();"#;
-        
+
         let expected = vec!["1", "2"];
-        
+
         match run_lox_code(code) {
             Ok(result) => assert_eq!(result, expected),
             Err(e) => panic!("Test failed with error: {}", e),
@@ -185,9 +182,9 @@ inc();"#;
 
 var f = outer(10);
 print f(5);"#;
-        
+
         let expected = vec!["15"];
-        
+
         match run_lox_code(code) {
             Ok(result) => assert_eq!(result, expected),
             Err(e) => panic!("Test failed with error: {}", e),
@@ -212,9 +209,9 @@ print counter1();
 print counter2();
 print counter1();
 print counter2();"#;
-        
+
         let expected = vec!["1", "11", "2", "12"];
-        
+
         match run_lox_code(code) {
             Ok(result) => assert_eq!(result, expected),
             Err(e) => panic!("Test failed with error: {}", e),
@@ -240,9 +237,9 @@ print add10();
 print add20();
 print add10();
 print global;"#;
-        
+
         let expected = vec!["110", "130", "140", "140"];
-        
+
         match run_lox_code(code) {
             Ok(result) => assert_eq!(result, expected),
             Err(e) => panic!("Test failed with error: {}", e),
@@ -257,14 +254,14 @@ print global;"#;
   fun showA() {
     print a;
   }
-  
+
   showA();
   var a = "block";
   showA();
 }"#;
-        
+
         let expected = vec!["global", "global"];
-        
+
         match run_lox_code(code) {
             Ok(result) => assert_eq!(result, expected),
             Err(e) => panic!("Test failed with error: {}", e),
@@ -288,9 +285,9 @@ var calc = makeCalculator();
 calc(5);
 calc(3);
 calc(2);"#;
-        
+
         let expected = vec!["5", "8", "10"];
-        
+
         match run_lox_code(code) {
             Ok(result) => assert_eq!(result, expected),
             Err(e) => panic!("Test failed with error: {}", e),
@@ -314,9 +311,9 @@ var acc = makeAccumulator();
 acc(10);
 acc(20);
 acc(30);"#;
-        
+
         let expected = vec!["10", "30", "60"];
-        
+
         match run_lox_code(code) {
             Ok(result) => assert_eq!(result, expected),
             Err(e) => panic!("Test failed with error: {}", e),
@@ -333,9 +330,9 @@ acc(30);"#;
 }
 
 print outer(5);"#;
-        
+
         let expected = vec!["15"];
-        
+
         match run_lox_code(code) {
             Ok(result) => assert_eq!(result, expected),
             Err(e) => panic!("Test failed with error: {}", e),
@@ -356,9 +353,9 @@ fun makeClosure() {
 var closure = makeClosure();
 x = 20;
 closure();"#;
-        
+
         let expected = vec!["20"];
-        
+
         match run_lox_code(code) {
             Ok(result) => assert_eq!(result, expected),
             Err(e) => panic!("Test failed with error: {}", e),
@@ -378,9 +375,9 @@ closure();"#;
 }
 
 closure();"#;
-        
+
         let expected = vec!["42"];
-        
+
         match run_lox_code(code) {
             Ok(result) => assert_eq!(result, expected),
             Err(e) => panic!("Test failed with error: {}", e),
@@ -413,9 +410,9 @@ var c2 = makeClosure2();
 c1();
 c2();
 c1();"#;
-        
+
         let expected = vec!["1", "11", "12"];
-        
+
         match run_lox_code(code) {
             Ok(result) => assert_eq!(result, expected),
             Err(e) => panic!("Test failed with error: {}", e),
@@ -439,9 +436,9 @@ fun outer() {
 
 var f = outer();
 f();"#;
-        
+
         let expected = vec!["100", "200"];
-        
+
         match run_lox_code(code) {
             Ok(result) => assert_eq!(result, expected),
             Err(e) => panic!("Test failed with error: {}", e),
@@ -469,9 +466,9 @@ closure();
 
 condition = false;
 closure();"#;
-        
+
         let expected = vec!["10", "false branch"];
-        
+
         match run_lox_code(code) {
             Ok(result) => assert_eq!(result, expected),
             Err(e) => panic!("Test failed with error: {}", e),
@@ -496,9 +493,9 @@ closure();"#;
 
 modifyClosure();
 modifyClosure();"#;
-        
+
         let expected = vec!["5", "10", "20"];
-        
+
         match run_lox_code(code) {
             Ok(result) => assert_eq!(result, expected),
             Err(e) => panic!("Test failed with error: {}", e),
@@ -522,9 +519,9 @@ modifyClosure();"#;
 
 var f = level1();
 f();"#;
-        
+
         let expected = vec!["1", "2", "3"];
-        
+
         match run_lox_code(code) {
             Ok(result) => assert_eq!(result, expected),
             Err(e) => panic!("Test failed with error: {}", e),
@@ -545,9 +542,9 @@ fun makeClosureWithParam(x) {
 var closure = makeClosureWithParam(42);
 closure();
 print x;"#;
-        
+
         let expected = vec!["42", "100"];
-        
+
         match run_lox_code(code) {
             Ok(result) => assert_eq!(result, expected),
             Err(e) => panic!("Test failed with error: {}", e),
@@ -569,9 +566,9 @@ print x;"#;
 var f = outer(1);
 var g = f(2);
 print g(3);"#;
-        
+
         let expected = vec!["6"];
-        
+
         match run_lox_code(code) {
             Ok(result) => assert_eq!(result, expected),
             Err(e) => panic!("Test failed with error: {}", e),
@@ -593,14 +590,12 @@ print g(3);"#;
 var fact = makeFactorial();
 print fact(5);
 print fact(3);"#;
-        
+
         let expected = vec!["120", "6"];
-        
+
         match run_lox_code(code) {
             Ok(result) => assert_eq!(result, expected),
             Err(e) => panic!("Test failed with error: {}", e),
         }
     }
-
-
 }
