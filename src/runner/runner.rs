@@ -8,6 +8,8 @@ use std::{
     rc::Rc,
 };
 
+use crate::evaluator::ClosureBindingEnv;
+
 use chrono::Utc;
 use miette::{miette, Error, LabeledSpan};
 
@@ -33,6 +35,16 @@ impl<'de> EnvironmentInner<'de> {
     }
 
     pub fn get(&self, name: &str) -> Option<Value<'de>> {
+        // println!(
+        //     "Looking for variable: {}, current env bindings: {}",
+        //     name,
+        //     self.bindings
+        //         .borrow()
+        //         .keys()
+        //         .cloned()
+        //         .collect::<Vec<_>>()
+        //         .join(", ")
+        // );
         if let Some(value) = self.bindings.borrow().get(name) {
             return Some(value.clone());
         }
@@ -95,20 +107,28 @@ pub struct LoopContext {
 pub struct StackFrame<'de> {
     pub return_value: Option<Value<'de>>,
     pub env_before_call: Environment<'de>,
+    pub closure_binding_env: ClosureBindingEnv<'de>,
+    pub closure_env: Option<Environment<'de>>,
 }
 
 impl<'de> StackFrame<'de> {
-    pub fn new(env_before_call: Environment<'de>) -> Self {
+    pub fn new(
+        env_before_call: Environment<'de>,
+        closure_binding_env: ClosureBindingEnv<'de>,
+        closure_env: Option<Environment<'de>>,
+    ) -> Self {
         Self {
             env_before_call,
             return_value: None,
+            closure_binding_env,
+            closure_env,
         }
     }
 }
 
 #[derive(Debug)]
 pub struct Vm<'de> {
-    global: Environment<'de>,
+    pub global: Environment<'de>,
     pub current_env: Environment<'de>,
     call_stack: Vec<StackFrame<'de>>,
     loop_context_stack: Vec<LoopContext>,
@@ -130,71 +150,6 @@ impl<'de> Vm<'de> {
 
         vm
     }
-
-    // pub fn push_stack_frame(&mut self) {
-    //     self.stack.push(StackFrame::new());
-    // }
-
-    // pub fn pop_stack_frame(&mut self) {
-    //     if self.stack.len() > 1 {
-    //         self.stack.pop();
-    //     } else {
-    //         panic!("Cannot pop the last stack frame");
-    //     }
-    // }
-
-    // pub fn current_stack_frame(&self) -> &StackFrame<'de> {
-    //     self.stack.last().expect("No stack frame")
-    // }
-
-    // pub fn current_stack_frame_mut(&mut self) -> &mut StackFrame<'de> {
-    //     self.stack.last_mut().expect("No stack frame")
-    // }
-
-    // pub fn get_variable_value(&self, variable: &str) -> Option<&Value<'de>> {
-    //     for stack_frame in self.stack.iter().rev() {
-    //         for scope in stack_frame.scopes.iter().rev() {
-    //             if let Some(value) = scope.get_variable_value(variable) {
-    //                 return Some(value);
-    //             }
-    //         }
-    //     }
-
-    //     None
-    // }
-
-    // pub fn get_variable_value_mut(&mut self, variable: &str) -> Option<&mut Value<'de>> {
-    //     for stack_frame in self.stack.iter_mut().rev() {
-    //         for scope in stack_frame.scopes.iter_mut().rev() {
-    //             if let Some(value) = scope.get_variable_value_mut(variable) {
-    //                 return Some(value);
-    //             }
-    //         }
-    //     }
-
-    //     None
-    // }
-
-    // pub fn new_variable(&mut self, variable: String, value: Value<'de>) {
-    //     self.current_stack_frame_mut()
-    //         .current_scope_mut()
-    //         .set_variable_value(variable, value);
-    // }
-
-    // fn set_global_variable(&mut self, variable: String, value: Value<'de>) {
-    //     if let Some(scope) = self.stack.first_mut() {
-    //         scope
-    //             .current_scope_mut()
-    //             .set_variable_value(variable, value);
-    //     } else {
-    //         // If no stack frame exists, create one
-    //         let mut new_frame = StackFrame::new();
-    //         new_frame
-    //             .current_scope_mut()
-    //             .set_variable_value(variable, value);
-    //         self.stack.push(new_frame);
-    //     }
-    // }
 
     fn init_global(&mut self) {
         self.global.define(
@@ -224,10 +179,15 @@ impl<'de> Vm<'de> {
         }
     }
 
-    pub fn enter_function(&mut self, closure_env: Option<Environment<'de>>) {
+    pub fn enter_function(
+        &mut self,
+        closure_env: Option<Environment<'de>>,
+        closure_binding_env: ClosureBindingEnv<'de>,
+    ) {
         // 1. push a new stack frame with storing current environment
         let env_before_call = self.current_env.clone();
-        let new_stack_frame = StackFrame::new(env_before_call);
+        let new_stack_frame =
+            StackFrame::new(env_before_call, closure_binding_env, closure_env.clone());
         self.call_stack.push(new_stack_frame);
 
         // 2. create a new environment for the function call
@@ -242,7 +202,9 @@ impl<'de> Vm<'de> {
 
     pub fn leave_function(&mut self) -> Result<(), Error> {
         if let Some(current_stack_frame) = self.current_stack_frame() {
+            // Restore the environment before the function call
             self.current_env = current_stack_frame.env_before_call.clone();
+            // Pop the stack frame
             self.call_stack.pop();
             Ok(())
         } else {
@@ -254,7 +216,19 @@ impl<'de> Vm<'de> {
     }
 
     pub fn get_variable(&self, name: &str) -> Option<Value<'de>> {
-        self.current_env.get(name)
+        let current_stack_frame = self.current_stack_frame()?;
+
+        // println!(
+        //     "Looking for variable: {}, current_stack_frame closure bindings: {:?}",
+        //     name,
+        //     current_stack_frame.closure_binding_env.keys()
+        // );
+        if let Some(closure_env) = current_stack_frame.closure_binding_env.get(name) {
+            // if the variable is found in the closure bindings, try to get it in the parent environment
+            closure_env.get(name)
+        } else {
+            self.current_env.get(name)
+        }
     }
 
     pub fn define_variable(&mut self, name: String, value: Value<'de>) {
@@ -262,26 +236,17 @@ impl<'de> Vm<'de> {
     }
 
     pub fn assign_variable(&mut self, name: &str, value: Value<'de>) -> bool {
+        // Check the current stack frame's closure bindings first
+        let Some(current_stack_frame) = self.current_stack_frame() else {
+            return self.current_env.assign(name, value);
+        };
+
+        if let Some(closure_env) = current_stack_frame.closure_binding_env.get(name) {
+            return closure_env.assign(name, value);
+        }
+
         self.current_env.assign(name, value)
     }
-
-    // pub fn push_stack_frame(&mut self, env_before_call: Environment<'de>) {
-    //     // let env_before_call = self.current_env.clone();
-    //     self.call_stack.push(StackFrame::new(env_before_call));
-    // }
-    // pub fn pop_stack_frame(&mut self) -> Result<StackFrame<'de>, Error> {
-    //     // if let Some(frame) = self.call_stack.pop() {
-    //     //     self.current_env = frame.env_before_call;
-    //     // } else {
-    //     //     panic!("Cannot pop from an empty call stack");
-    //     // }
-    //     self.call_stack.pop().ok_or_else(|| {
-    //         error::RuntimeError::InternalError {
-    //             message: "Cannot pop from an empty call stack".to_string(),
-    //         }
-    //         .into()
-    //     })
-    // }
 
     pub fn current_stack_frame(&self) -> Option<&StackFrame<'de>> {
         self.call_stack.last()
@@ -346,6 +311,13 @@ impl<'de> Runner<'de> {
     }
 
     pub fn run(mut self) -> Result<(), Error> {
+        self.vm.call_stack.push(StackFrame::new(
+            self.vm.current_env.clone(),
+            HashMap::new(),
+            None,
+        ));
+
+        self.vm.enter_scope();
         loop {
             let statement = self.evaluator.parser.next();
             match statement {
@@ -359,6 +331,13 @@ impl<'de> Runner<'de> {
                 None => break,
             }
         }
+        self.vm.leave_scope();
+
+        self.vm.call_stack.pop().ok_or_else(|| {
+            miette!(error::RuntimeError::InternalError {
+                message: "Cannot pop from an empty call stack".to_string()
+            })
+        })?;
 
         Ok(())
     }

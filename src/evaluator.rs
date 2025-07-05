@@ -1,18 +1,25 @@
 use core::fmt;
-use std::{borrow::Cow, cell::RefCell, collections::HashMap, ops::Deref, rc::Rc};
+use std::{
+    borrow::Cow,
+    cell::RefCell,
+    collections::HashMap,
+    ops::{Deref, DerefMut},
+    rc::Rc,
+};
 
 use miette::{Error, LabeledSpan, SourceSpan};
 
 use crate::{
     ast::{
-        AssignmentExpression, BlockStatement, Declaration, DeclarationInner, Expression,
-        ExpressionInner, ForInit, ForInitInner, Identifier, LiteralInner, Op, Statement,
-        StatementInner, TokenTree,
+        AssignmentExpression, BlockStatement, Declaration, DeclarationInner, Expression, ExpressionInner, ForInit, ForInitInner, FunctionDeclaration, Identifier, LiteralInner, Op, Statement, StatementInner, TokenTree, Visitor
     },
     error, log_stdout,
-    runner::{Environment, Vm},
+    runner::{global::console, Environment, Vm},
     Parser,
 };
+
+// Type alias for closure binding environment
+pub type ClosureBindingEnv<'de> = HashMap<String, Environment<'de>>;
 
 unsafe impl Send for Value<'_> {}
 unsafe impl Sync for Value<'_> {}
@@ -60,6 +67,7 @@ pub struct Function<'de> {
     pub parameters: Vec<Identifier<'de>>,
     pub body: BlockStatement<'de>,
     pub closure_env: Option<Environment<'de>>,
+    pub closure_binding_env: ClosureBindingEnv<'de>,
 }
 
 #[derive(Debug)]
@@ -107,6 +115,7 @@ impl<'de> Value<'de> {
         parameters: Vec<Identifier<'de>>,
         body: BlockStatement<'de>,
         closure_env: Option<Environment<'de>>,
+        closure_binding_env: ClosureBindingEnv<'de>,
     ) -> Self {
         Self {
             inner: Rc::new(ValueInner::Function(Function {
@@ -114,6 +123,7 @@ impl<'de> Value<'de> {
                 parameters,
                 body,
                 closure_env,
+                closure_binding_env,
             })),
         }
     }
@@ -187,8 +197,7 @@ impl<'de> Evaluator<'de> {
 
     // only used in evaluate command
     pub fn evaluate_command(&mut self, vm: &mut Vm<'de>) -> Result<Value<'de>, Error> {
-        let expr: Option<crate::ast::Spanned<crate::ast::ExpressionInner<'de>>> =
-            self.parser.parse_expression()?;
+        let expr = self.parser.parse_expression()?;
         match expr {
             Some(expr) => {
                 // self.evaluate_token_tree(&tt, state)
@@ -229,27 +238,6 @@ impl<'de> Evaluator<'de> {
         vm: &mut Vm<'de>,
     ) -> Result<Value<'de>, Error> {
         match &expr.inner {
-            // assigment expression is a kind of binary expression
-            // ExpressionInner::Assignment(assignment_expr) => match assignment_expr.operator {
-            //     Op::Equal => {
-            //     let variable = &assignment_expr.left.name;
-            //     let value = self.evaluate_expression(&assignment_expr.right, state)?;
-
-            //     if let Some(variable) = state.get_variable_value_mut(variable) {
-            //         *variable = value.clone();
-            //     } else {
-            //         return Err(error::RuntimeError::ReferenceError {
-            //             src: self.whole.to_string(),
-            //             ident: variable.to_string(),
-            //             err_span: assignment_expr.left.range.into(),
-            //         }
-            //         .into());
-            //     };
-
-            //     Ok(value)
-            // }
-            //     _ => unreachable!("Only `=` operator is supported for assignment currently"),
-            // },
             ExpressionInner::Binary(binary_expr) => {
                 match binary_expr.operator {
                     Op::Plus => {
@@ -493,7 +481,7 @@ impl<'de> Evaluator<'de> {
             }
 
             ExpressionInner::Identifier(ident) => {
-                self.evaluate_identifier(ident, vm, expr.range.into())
+                self.evaluate_identifier(ident, vm, (expr.range.0..expr.range.1).into())
             }
 
             ExpressionInner::Group(group_expr) => {
@@ -533,7 +521,7 @@ impl<'de> Evaluator<'de> {
             }
 
             ExpressionInner::Call(call_expr) => {
-                let callee_value = self.evaluate_expression(&call_expr.callee, vm)?;
+                let mut callee_value = self.evaluate_expression(&call_expr.callee, vm)?;
                 // arguments evaluation must happen before closure environment is set
                 let mut arguments = Vec::new();
                 for arg in &call_expr.arguments {
@@ -557,38 +545,15 @@ impl<'de> Evaluator<'de> {
                             .into());
                         }
 
-                        // vm.enter_function(if let Some(closure_env) = &func.closure_env {
-                        //     closure_env.clone()
-                        // } else {
-                        //     vm.current_env.clone()
-                        // });
-
-                        vm.enter_function(func.closure_env.clone());
-
-                        // vm.push_stack_frame();
-
-                        // let call_env = (if let Some(closure_env) = &func.closure_env {
-                        //     closure_env.clone()
-                        // } else {
-                        //     vm.current_env.clone()
-                        // })
-                        // .new_enclosed();
-
-                        // vm.current_stack_frame_mut()
-                        //     .expect("Stack frame should always be present")
-                        //     .env_before_call = vm.current_env.clone();
-
-                        // vm.current_env = call_env;
+                        vm.enter_function(
+                            func.closure_env.clone(),
+                            func.closure_binding_env.clone(),
+                        );
 
                         // let mut arguments = Vec::new();
                         for (param, arg_value) in func.parameters.iter().zip(arguments) {
                             vm.define_variable(param.to_string(), arg_value);
                         }
-                        // println!(
-                        //     "Calling {} function with env: {:?}",
-                        //     func.name,
-                        //     vm.current_env.0.bindings.borrow().keys()
-                        // );
 
                         for stmt in &func.body.statements {
                             self.run_statement(stmt, vm)?;
@@ -598,15 +563,6 @@ impl<'de> Evaluator<'de> {
                             .current_stack_frame()
                             .and_then(|frame| frame.return_value.clone())
                             .unwrap_or_else(|| Value::new_nil());
-
-                        // vm.leave_scope();
-                        // vm.current_env = vm
-                        //     .current_stack_frame()
-                        //     .expect("Stack frame should always be present")
-                        //     .env_before_call
-                        //     .clone();
-
-                        // vm.pop_stack_frame();
 
                         vm.leave_function()?;
 
@@ -634,78 +590,6 @@ impl<'de> Evaluator<'de> {
                         .into());
                     }
                 }
-
-                // vm.push_stack_frame();
-                // vm.enter_scope();
-
-                // let callee_value = self.evaluate_expression(&call_expr.callee, vm)?;
-                // let mut arguments = Vec::new();
-                // for arg in &call_expr.arguments {
-                //     let arg_value = self.evaluate_expression(arg, vm)?;
-                //     arguments.push(arg_value);
-                // }
-
-                // let ret = match &*callee_value {
-                //     ValueInner::Function(func) => {
-                //         if func.parameters.len() != arguments.len() {
-                //             return Err(error::RuntimeError::BadOperandError {
-                //                 src: self.whole.to_string(),
-                //                 operator: "call".to_string(),
-                //                 reason: format!(
-                //                     "Expected {} arguments, but got {}",
-                //                     func.parameters.len(),
-                //                     arguments.len()
-                //                 ),
-                //                 err_span: expr.range.into(),
-                //             }
-                //             .into());
-                //         }
-
-                //         // let current_stack_frame = vm
-                //         //     .current_stack_frame_mut()
-                //         //     .expect("Stack frame should always be present");
-
-                //         // Add the function itself to the new scope for recursion
-                //         vm.define_variable(func.name.clone(), callee_value.clone());
-
-                //         for (param, arg) in func.parameters.iter().zip(arguments) {
-                //             vm.define_variable(param.to_string(), arg);
-                //         }
-
-                //         // Execute function body - handle BlockStatement directly
-                //         // vm.current_stack_frame_mut().push_scope(false);
-                //         for stmt in &func.body.statements {
-                //             self.run_statement(stmt, vm)?;
-                //         }
-
-                //         let return_value = vm.current_stack_frame().unwrap().return_value.clone();
-
-                //         // vm.current_stack_frame_mut().pop_scope();
-
-                //         // Functions return nil by default (return statement support can be added later)
-                //         Ok(return_value.clone().unwrap_or_else(|| Value::new_nil()))
-                //     }
-
-                //     ValueInner::NativeFunction(native_func) => {
-                //         let ret = (native_func.fn_ptr)(&arguments);
-                //         Ok(ret?)
-                //     }
-
-                //     _ => {
-                //         return Err(error::RuntimeError::BadOperandError {
-                //             src: self.whole.to_string(),
-                //             operator: "call".to_string(),
-                //             reason: "Callee must be a function".to_string(),
-                //             err_span: expr.range.into(),
-                //         }
-                //         .into())
-                //     }
-                // };
-
-                // vm.leave_scope();
-                // vm.pop_stack_frame();
-
-                // ret
             }
 
             ExpressionInner::Member(member) => {
@@ -792,16 +676,36 @@ impl<'de> Evaluator<'de> {
                         }
                     };
 
+                    if let Some(current_stack_frame) = vm.current_stack_frame_mut() {
+                        // If the variable was a closure binding, we remove it because it's being redefined
+                        current_stack_frame
+                            .closure_binding_env
+                            .remove(&variable_name);
+                    }
+
                     vm.define_variable(variable_name, init);
                 }
+
                 DeclarationInner::Function(func_declaration) => {
                     let function_name = func_declaration.name.to_string();
+
+                    let closure_binding_env =
+                        self.collect_closure_binding_env(func_declaration, vm);
+
                     let function_value = Value::new_function(
                         function_name.clone(),
                         func_declaration.parameters.clone(),
                         *func_declaration.body.clone(),
-                        Some(vm.current_env.clone()), // Capture the current environment
+                        Some(vm.current_env.clone()),
+                        closure_binding_env,
                     );
+
+                    if let Some(current_stack_frame) = vm.current_stack_frame_mut() {
+                        // If the variable was a closure binding, we remove it because it's being redefined
+                        current_stack_frame
+                            .closure_binding_env
+                            .remove(&function_name);
+                    }
 
                     // Register the function in the current scope
                     vm.define_variable(function_name, function_value);
@@ -975,25 +879,16 @@ impl<'de> Evaluator<'de> {
     }
 
     fn check_should_continue(&self, vm: &Vm<'de>) -> bool {
-        // vm
-        //     .current_stack_frame()
-        //     .nearest_enclosing_loop_scope()
-        //     .map_or(false, |scope| scope.should_continue)
         vm.current_loop_context()
             .map_or(false, |loop_ctx| loop_ctx.should_continue)
     }
 
     fn check_should_break(&self, vm: &Vm<'de>) -> bool {
-        // state
-        //     .current_stack_frame()
-        //     .nearest_enclosing_loop_scope()
-        //     .map_or(false, |scope| scope.should_break)
         vm.current_loop_context()
             .map_or(false, |loop_ctx| loop_ctx.should_break)
     }
 
     fn check_should_return(&self, vm: &Vm<'de>) -> bool {
-        // state.current_stack_frame().return_value.is_some()
         vm.current_stack_frame()
             .map_or(false, |frame| frame.return_value.is_some())
     }
@@ -1005,5 +900,696 @@ impl<'de> Evaluator<'de> {
     ) -> Result<bool, Error> {
         // Ok(self.evaluate_expression(cond, state)?.boolean() && !self.check_should_break(state))
         Ok(self.evaluate_expression(cond, vm)?.boolean() && !self.check_should_break(vm))
+    }
+
+    // for simplicity, we try to collect all variables used in the function body
+    fn collect_closure_binding_env(
+        &self,
+        func_decl: &FunctionDeclaration<'de>,
+        vm: &Vm<'de>,
+    ) -> ClosureBindingEnv<'de> {
+        let mut binding_env = HashMap::new();
+
+        struct AstVisitor<'a, 'de> {
+            func_decl: &'a crate::ast::FunctionDeclaration<'de>,
+            vm: &'a Vm<'de>,
+            binding_env: &'a mut ClosureBindingEnv<'de>,
+            local_vars: std::collections::HashSet<String>,
+        }
+
+        impl<'a, 'de> AstVisitor<'a, 'de> {
+            fn visit_expression_helper(&mut self, expression: &Expression<'de>) {
+                match &expression.inner {
+                    ExpressionInner::Literal(lit) => self.visit_literal(lit),
+                    ExpressionInner::Identifier(id) => self.visit_identifier(id),
+                    ExpressionInner::Unary(unary) => self.visit_unary_expression(unary),
+                    ExpressionInner::Binary(binary) => self.visit_binary_expression(binary),
+                    ExpressionInner::Group(group) => self.visit_group_expression(group),
+                    ExpressionInner::Assignment(assign) => self.visit_assignment_expression(assign),
+                    ExpressionInner::Call(call) => self.visit_call_expression(call),
+                    ExpressionInner::Member(member) => self.visit_member_expression(member),
+                }
+            }
+        }
+
+        impl<'a, 'de> Visitor<'de> for AstVisitor<'a, 'de> {
+            type Output = ();
+
+            fn visit_literal(&mut self, _literal: &crate::ast::Literal<'de>) -> Self::Output {}
+
+            fn visit_identifier(&mut self, identifier: &Identifier<'de>) -> Self::Output {
+                let name = identifier.inner.name.as_ref();
+
+                // let globalBindings = self.vm.global.bindings.borrow();
+                // println!("global: {globalBindings:?}");
+                // println!("local: {:?}", self.local_vars);
+
+                // If it's not a local variable, check if it's in the environment
+                if !self.local_vars.contains(name)
+                    && !self.vm.global.bindings.borrow().contains_key(name)
+                {
+                    // if let Some(value) = self.vm.current_env.get(name) {
+                    //     self.bindings.insert(name.to_string(), value);
+                    // }
+                    let mut env_option = Some(self.vm.current_env.clone());
+                    while let Some(ref env) = env_option {
+                        if env.bindings.borrow().contains_key(name) {
+                            self.binding_env.insert(name.to_string(), env.clone());
+                            break;
+                        }
+                        env_option = env.parent.clone();
+                    }
+                }
+            }
+
+            fn visit_unary_expression(
+                &mut self,
+                expr: &crate::ast::UnaryExpression<'de>,
+            ) -> Self::Output {
+                self.visit_expression_helper(&expr.inner.right);
+            }
+
+            fn visit_binary_expression(
+                &mut self,
+                expr: &crate::ast::BinaryExpression<'de>,
+            ) -> Self::Output {
+                self.visit_expression_helper(&expr.inner.left);
+                self.visit_expression_helper(&expr.inner.right);
+            }
+
+            fn visit_group_expression(
+                &mut self,
+                expr: &crate::ast::GroupExpression<'de>,
+            ) -> Self::Output {
+                self.visit_expression_helper(&expr.inner.expression);
+            }
+
+            fn visit_assignment_expression(
+                &mut self,
+                expr: &AssignmentExpression<'de>,
+            ) -> Self::Output {
+                self.visit_expression_helper(&expr.inner.right);
+                // Note: assignment target is handled separately as it may introduce new local variables
+            }
+
+            fn visit_call_expression(
+                &mut self,
+                expr: &crate::ast::CallExpression<'de>,
+            ) -> Self::Output {
+                self.visit_expression_helper(&expr.inner.callee);
+                for arg in &expr.inner.arguments {
+                    self.visit_expression_helper(arg);
+                }
+            }
+
+            fn visit_member_expression(
+                &mut self,
+                expr: &crate::ast::MemberExpression<'de>,
+            ) -> Self::Output {
+                self.visit_expression_helper(&expr.inner.object);
+                self.visit_expression_helper(&expr.inner.property);
+            }
+
+            fn visit_block_statement(&mut self, block: &BlockStatement<'de>) -> Self::Output {
+                for stmt in &block.inner.statements {
+                    self.visit_statement(stmt);
+                }
+            }
+
+            fn visit_if_statement(
+                &mut self,
+                if_stmt: &crate::ast::IfStatement<'de>,
+            ) -> Self::Output {
+                self.visit_expression_helper(&if_stmt.inner.test);
+                self.visit_statement(&if_stmt.inner.consequent);
+                if let Some(alternate) = &if_stmt.inner.alternate {
+                    self.visit_statement(alternate);
+                }
+            }
+
+            fn visit_while_statement(
+                &mut self,
+                while_stmt: &crate::ast::WhileStatement<'de>,
+            ) -> Self::Output {
+                self.visit_expression_helper(&while_stmt.inner.test);
+                self.visit_statement(&while_stmt.inner.body);
+            }
+
+            fn visit_for_statement(
+                &mut self,
+                for_stmt: &crate::ast::ForStatement<'de>,
+            ) -> Self::Output {
+                if let Some(init) = &for_stmt.inner.init {
+                    match &init.inner {
+                        ForInitInner::VariableDeclaration(decl) => {
+                            self.visit_variable_declaration(decl);
+                        }
+                        ForInitInner::Expression(expr) => {
+                            self.visit_expression_helper(expr);
+                        }
+                    }
+                }
+                if let Some(test) = &for_stmt.inner.test {
+                    self.visit_expression_helper(test);
+                }
+                if let Some(update) = &for_stmt.inner.update {
+                    self.visit_expression_helper(update);
+                }
+                self.visit_statement(&for_stmt.inner.body);
+            }
+
+            fn visit_variable_declaration(
+                &mut self,
+                decl: &crate::ast::VariableDeclaration<'de>,
+            ) -> Self::Output {
+                // Add the variable to local variables
+                self.local_vars
+                    .insert(decl.inner.id.inner.name.as_ref().to_string());
+
+                // Visit the initializer if present
+                if let Some(init) = &decl.inner.init {
+                    self.visit_expression_helper(init);
+                }
+            }
+
+            fn visit_function_declaration(
+                &mut self,
+                decl: &crate::ast::FunctionDeclaration<'de>,
+            ) -> Self::Output {
+                // Add the function name to local variables
+                self.local_vars
+                    .insert(decl.inner.name.inner.name.as_ref().to_string());
+
+                // Note: We don't visit the function body as it has its own scope
+            }
+
+            fn visit_class_declaration(
+                &mut self,
+                decl: &crate::ast::ClassDeclaration<'de>,
+            ) -> Self::Output {
+                // Add the class name to local variables
+                self.local_vars
+                    .insert(decl.inner.id.inner.name.as_ref().to_string());
+            }
+
+            fn visit_statement(&mut self, statement: &Statement<'de>) -> Self::Output {
+                match &statement.inner {
+                    StatementInner::Expression(expr) => {
+                        self.visit_expression_helper(expr);
+                    }
+                    StatementInner::Print(expr) => {
+                        self.visit_expression_helper(expr);
+                    }
+                    StatementInner::Return(expr) => {
+                        if let Some(expr) = expr {
+                            self.visit_expression_helper(expr);
+                        }
+                    }
+                    StatementInner::Block(block) => self.visit_block_statement(block),
+                    StatementInner::Declaration(decl) => match &decl.inner {
+                        DeclarationInner::Variable(var_decl) => {
+                            self.visit_variable_declaration(var_decl)
+                        }
+                        DeclarationInner::Function(func_decl) => {
+                            self.visit_function_declaration(func_decl)
+                        }
+                        DeclarationInner::Class(class_decl) => {
+                            self.visit_class_declaration(class_decl)
+                        }
+                    },
+                    StatementInner::If(if_stmt) => self.visit_if_statement(if_stmt),
+                    StatementInner::While(while_stmt) => self.visit_while_statement(while_stmt),
+                    StatementInner::For(for_stmt) => self.visit_for_statement(for_stmt),
+                    StatementInner::Break | StatementInner::Continue => {}
+                }
+            }
+        }
+
+        // Initialize local variables with function parameters
+        let mut local_vars = std::collections::HashSet::new();
+        for param in &func_decl.inner.parameters {
+            local_vars.insert(param.inner.name.as_ref().to_string());
+        }
+
+        let mut visitor = AstVisitor {
+            func_decl,
+            vm,
+            binding_env: &mut binding_env,
+            local_vars,
+        };
+
+        // Visit the function body to collect closure binding environment
+        visitor.visit_block_statement(&func_decl.inner.body);
+
+        binding_env
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        ast::{
+            BlockStatement, BlockStatementInner, Expression, ExpressionInner, FunctionDeclaration,
+            FunctionDeclarationInner, Identifier, IdentifierInner, Statement, StatementInner,
+        },
+        runner::{Environment, Vm},
+        Parser,
+    };
+    use std::{borrow::Cow, collections::HashMap};
+
+    #[test]
+    fn test_collect_closure_binding_env_basic() {
+        // Create a simple function that references an external variable
+        let external_var_name = "external_var";
+        let param_name = "param";
+
+        // Create identifier for external variable
+        let external_var_identifier = Identifier {
+            inner: IdentifierInner {
+                name: Cow::Borrowed(external_var_name),
+            },
+            range: (0, 0),
+        };
+
+        // Create expression that references external variable
+        let external_var_expr = Expression {
+            inner: ExpressionInner::Identifier(external_var_identifier),
+            range: (0, 0),
+        };
+
+        // Create statement that uses the external variable
+        let stmt = Statement {
+            inner: StatementInner::Expression(external_var_expr),
+            range: (0, 0),
+        };
+
+        // Create function body with the statement
+        let body = BlockStatement {
+            inner: BlockStatementInner {
+                statements: vec![stmt],
+            },
+            range: (0, 0),
+        };
+
+        // Create function parameter
+        let param = Identifier {
+            inner: IdentifierInner {
+                name: Cow::Borrowed(param_name),
+            },
+            range: (0, 0),
+        };
+
+        // Create function declaration
+        let func_decl = FunctionDeclaration {
+            inner: FunctionDeclarationInner {
+                name: Identifier {
+                    inner: IdentifierInner {
+                        name: Cow::Borrowed("test_func"),
+                    },
+                    range: (0, 0),
+                },
+                parameters: vec![param],
+                body: Box::new(body),
+            },
+            range: (0, 0),
+        };
+
+        // Create VM with environment containing external variable
+        let env = Environment::new_global();
+        let external_value = Value::new_string("external_value".into());
+        env.define(external_var_name.to_string(), external_value.clone());
+
+        let mut vm = Vm::new();
+        vm.current_env = env.clone();
+
+        // Create evaluator
+        let evaluator = Evaluator::new("");
+
+        // Test collect_closure_binding_env
+        let binding_env = evaluator.collect_closure_binding_env(&func_decl, &vm);
+
+        // Verify that external variable environment is captured
+        assert_eq!(binding_env.len(), 1);
+        assert!(binding_env.contains_key(external_var_name));
+
+        // Verify the captured environment contains the variable
+        let captured_env = binding_env.get(external_var_name).unwrap();
+        let captured_value = captured_env.get(external_var_name).unwrap();
+        match (&*captured_value.inner, &*external_value.inner) {
+            (ValueInner::String(s1), ValueInner::String(s2)) => assert_eq!(s1, s2),
+            _ => panic!("Expected string values"),
+        }
+    }
+
+    #[test]
+    fn test_collect_closure_binding_env_excludes_params() {
+        // Create a function that references a parameter (should not be captured)
+        let param_name = "param";
+
+        // Create identifier for parameter
+        let param_identifier = Identifier {
+            inner: IdentifierInner {
+                name: Cow::Borrowed(param_name),
+            },
+            range: (0, 0),
+        };
+
+        // Create expression that references parameter
+        let param_expr = Expression {
+            inner: ExpressionInner::Identifier(param_identifier.clone()),
+            range: (0, 0),
+        };
+
+        // Create statement that uses the parameter
+        let stmt = Statement {
+            inner: StatementInner::Expression(param_expr),
+            range: (0, 0),
+        };
+
+        // Create function body with the statement
+        let body = BlockStatement {
+            inner: BlockStatementInner {
+                statements: vec![stmt],
+            },
+            range: (0, 0),
+        };
+
+        // Create function declaration
+        let func_decl = FunctionDeclaration {
+            inner: FunctionDeclarationInner {
+                name: Identifier {
+                    inner: IdentifierInner {
+                        name: Cow::Borrowed("test_func"),
+                    },
+                    range: (0, 0),
+                },
+                parameters: vec![param_identifier],
+                body: Box::new(body),
+            },
+            range: (0, 0),
+        };
+
+        // Create VM with environment containing variable with same name as parameter
+        let env = Environment::new_global();
+        let param_value = Value::new_string("param_value".into());
+        env.define(param_name.to_string(), param_value);
+
+        let mut vm = Vm::new();
+        vm.current_env = env.clone();
+
+        // Create evaluator
+        let evaluator = Evaluator::new("");
+
+        // Test collect_closure_binding_env
+        let binding_env = evaluator.collect_closure_binding_env(&func_decl, &vm);
+
+        // Verify that parameter is NOT captured (since it's a local variable)
+        assert_eq!(binding_env.len(), 0);
+    }
+
+    #[test]
+    fn test_closure_binding_env_integration() {
+        // Test the full integration of closure binding environment with function declarations
+        let outer_var_name = "outer_var";
+        let inner_var_name = "inner_var";
+
+        // Create VM with environment containing outer variable
+        let env = Environment::new_global();
+        let outer_value = Value::new_string("outer_value".into());
+        env.define(outer_var_name.to_string(), outer_value.clone());
+
+        let mut vm = Vm::new();
+        vm.current_env = env.clone();
+
+        // Create evaluator
+        let evaluator = Evaluator::new("");
+
+        // Create a function declaration that references the outer variable
+        let outer_var_identifier = Identifier {
+            inner: IdentifierInner {
+                name: Cow::Borrowed(outer_var_name),
+            },
+            range: (0, 0),
+        };
+
+        // Create variable declaration inside function (should not be captured)
+        let inner_var_decl = crate::ast::VariableDeclaration {
+            inner: crate::ast::VariableDeclarationInner {
+                id: Identifier {
+                    inner: IdentifierInner {
+                        name: Cow::Borrowed(inner_var_name),
+                    },
+                    range: (0, 0),
+                },
+                init: Some(Expression {
+                    inner: ExpressionInner::Identifier(outer_var_identifier.clone()),
+                    range: (0, 0),
+                }),
+            },
+            range: (0, 0),
+        };
+
+        // Create statement that declares the inner variable
+        let var_decl_stmt = Statement {
+            inner: StatementInner::Declaration(crate::ast::Declaration {
+                inner: crate::ast::DeclarationInner::Variable(inner_var_decl),
+                range: (0, 0),
+            }),
+            range: (0, 0),
+        };
+
+        // Create statement that uses the inner variable
+        let inner_var_use = Statement {
+            inner: StatementInner::Expression(Expression {
+                inner: ExpressionInner::Identifier(Identifier {
+                    inner: IdentifierInner {
+                        name: Cow::Borrowed(inner_var_name),
+                    },
+                    range: (0, 0),
+                }),
+                range: (0, 0),
+            }),
+            range: (0, 0),
+        };
+
+        // Create function body with both statements
+        let body = BlockStatement {
+            inner: BlockStatementInner {
+                statements: vec![var_decl_stmt, inner_var_use],
+            },
+            range: (0, 0),
+        };
+
+        // Create function declaration
+        let func_decl = crate::ast::FunctionDeclaration {
+            inner: crate::ast::FunctionDeclarationInner {
+                name: Identifier {
+                    inner: IdentifierInner {
+                        name: Cow::Borrowed("test_func"),
+                    },
+                    range: (0, 0),
+                },
+                parameters: vec![],
+                body: Box::new(body),
+            },
+            range: (0, 0),
+        };
+
+        // Test collect_closure_binding_env directly
+        let binding_env = evaluator.collect_closure_binding_env(&func_decl, &vm);
+
+        // Verify that only the outer variable environment is captured
+        assert_eq!(binding_env.len(), 1);
+        assert!(binding_env.contains_key(outer_var_name));
+        assert!(!binding_env.contains_key(inner_var_name));
+
+        // Verify the captured environment contains the correct value
+        let captured_env = binding_env.get(outer_var_name).unwrap();
+        let captured_value = captured_env.get(outer_var_name).unwrap();
+        match (&*captured_value.inner, &*outer_value.inner) {
+            (ValueInner::String(s1), ValueInner::String(s2)) => assert_eq!(s1, s2),
+            _ => panic!("Expected string values"),
+        }
+    }
+
+    #[test]
+    fn test_closure_binding_env_comprehensive() {
+        // Test comprehensive closure binding environment functionality
+        let global_var = "global_var";
+        let outer_var = "outer_var";
+        let param_var = "param_var";
+        let local_var = "local_var";
+
+        // Create VM with environment containing variables
+        let env = Environment::new_global();
+        let global_value = Value::new_string("global_value".into());
+        let outer_value = Value::new_string("outer_value".into());
+        env.define(global_var.to_string(), global_value.clone());
+        env.define(outer_var.to_string(), outer_value.clone());
+
+        let mut vm = Vm::new();
+        vm.current_env = env.clone();
+
+        // Create evaluator
+        let evaluator = Evaluator::new("");
+
+        // Create complex function that:
+        // 1. Takes a parameter (should not be captured)
+        // 2. Declares a local variable (should not be captured)
+        // 3. Uses outer variable (should be captured)
+        // 4. Uses global variable (should be captured)
+
+        // Parameter
+        let param_identifier = Identifier {
+            inner: IdentifierInner {
+                name: Cow::Borrowed(param_var),
+            },
+            range: (0, 0),
+        };
+
+        // Local variable declaration
+        let local_var_decl = crate::ast::VariableDeclaration {
+            inner: crate::ast::VariableDeclarationInner {
+                id: Identifier {
+                    inner: IdentifierInner {
+                        name: Cow::Borrowed(local_var),
+                    },
+                    range: (0, 0),
+                },
+                init: Some(Expression {
+                    inner: ExpressionInner::Identifier(Identifier {
+                        inner: IdentifierInner {
+                            name: Cow::Borrowed(param_var),
+                        },
+                        range: (0, 0),
+                    }),
+                    range: (0, 0),
+                }),
+            },
+            range: (0, 0),
+        };
+
+        // Statement declaring local variable
+        let local_var_stmt = Statement {
+            inner: StatementInner::Declaration(crate::ast::Declaration {
+                inner: crate::ast::DeclarationInner::Variable(local_var_decl),
+                range: (0, 0),
+            }),
+            range: (0, 0),
+        };
+
+        // Statement using outer variable
+        let outer_var_stmt = Statement {
+            inner: StatementInner::Expression(Expression {
+                inner: ExpressionInner::Identifier(Identifier {
+                    inner: IdentifierInner {
+                        name: Cow::Borrowed(outer_var),
+                    },
+                    range: (0, 0),
+                }),
+                range: (0, 0),
+            }),
+            range: (0, 0),
+        };
+
+        // Statement using global variable
+        let global_var_stmt = Statement {
+            inner: StatementInner::Expression(Expression {
+                inner: ExpressionInner::Identifier(Identifier {
+                    inner: IdentifierInner {
+                        name: Cow::Borrowed(global_var),
+                    },
+                    range: (0, 0),
+                }),
+                range: (0, 0),
+            }),
+            range: (0, 0),
+        };
+
+        // Statement using local variable
+        let local_var_use_stmt = Statement {
+            inner: StatementInner::Expression(Expression {
+                inner: ExpressionInner::Identifier(Identifier {
+                    inner: IdentifierInner {
+                        name: Cow::Borrowed(local_var),
+                    },
+                    range: (0, 0),
+                }),
+                range: (0, 0),
+            }),
+            range: (0, 0),
+        };
+
+        // Create function body with all statements
+        let body = BlockStatement {
+            inner: BlockStatementInner {
+                statements: vec![
+                    local_var_stmt,
+                    outer_var_stmt,
+                    global_var_stmt,
+                    local_var_use_stmt,
+                ],
+            },
+            range: (0, 0),
+        };
+
+        // Create function declaration
+        let func_decl = crate::ast::FunctionDeclaration {
+            inner: crate::ast::FunctionDeclarationInner {
+                name: Identifier {
+                    inner: IdentifierInner {
+                        name: Cow::Borrowed("comprehensive_func"),
+                    },
+                    range: (0, 0),
+                },
+                parameters: vec![param_identifier],
+                body: Box::new(body),
+            },
+            range: (0, 0),
+        };
+
+        // Test collect_closure_binding_env
+        let binding_env = evaluator.collect_closure_binding_env(&func_decl, &vm);
+
+        // Verify captured variables
+        assert_eq!(
+            binding_env.len(),
+            2,
+            "Should capture outer_var and global_var"
+        );
+        assert!(
+            binding_env.contains_key(outer_var),
+            "Should capture outer_var"
+        );
+        assert!(
+            binding_env.contains_key(global_var),
+            "Should capture global_var"
+        );
+
+        // Verify NOT captured variables
+        assert!(
+            !binding_env.contains_key(param_var),
+            "Should NOT capture parameter"
+        );
+        assert!(
+            !binding_env.contains_key(local_var),
+            "Should NOT capture local variable"
+        );
+
+        // Verify captured environments contain correct values
+        let outer_env = binding_env.get(outer_var).unwrap();
+        let outer_captured_value = outer_env.get(outer_var).unwrap();
+        match (&*outer_captured_value.inner, &*outer_value.inner) {
+            (ValueInner::String(s1), ValueInner::String(s2)) => assert_eq!(s1, s2),
+            _ => panic!("Expected string values for outer_var"),
+        }
+
+        let global_env = binding_env.get(global_var).unwrap();
+        let global_captured_value = global_env.get(global_var).unwrap();
+        match (&*global_captured_value.inner, &*global_value.inner) {
+            (ValueInner::String(s1), ValueInner::String(s2)) => assert_eq!(s1, s2),
+            _ => panic!("Expected string values for global_var"),
+        }
     }
 }

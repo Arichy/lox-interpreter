@@ -1,0 +1,164 @@
+// Simple Closure Demo for Lox Interpreter
+// Demonstrates closure functionality without string concatenation
+
+print "=== Simple Closure Demo ===";
+
+// 1. Basic Counter Closure
+print "1. Basic Counter:";
+fun makeCounter() {
+  var count = 0;
+  fun increment() {
+    count = count + 1;
+    print count;
+  }
+  return increment;
+}
+
+var counter = makeCounter();
+counter();  // 1
+counter();  // 2
+counter();  // 3
+
+// 2. Closure with Parameters
+print "2. Closure with Parameters:";
+fun makeAdder(x) {
+  fun add(y) {
+    return x + y;
+  }
+  return add;
+}
+
+var add5 = makeAdder(5);
+var add10 = makeAdder(10);
+print add5(3);   // 8
+print add10(7);  // 17
+
+// 3. Multiple Closures Sharing State
+print "3. Shared State:";
+fun makeBank() {
+  var balance = 100;
+  
+  fun deposit(amount) {
+    balance = balance + amount;
+    print balance;
+  }
+  
+  return deposit;
+}
+
+var deposit = makeBank();
+deposit(50);  // 150
+deposit(25);  // 175
+
+// 4. Nested Closures
+print "4. Nested Closures:";
+fun outerFunction(x) {
+  fun innerFunction(y) {
+    return x + y;
+  }
+  return innerFunction;
+}
+
+var nested = outerFunction(20);
+print nested(15); // 35
+
+// 5. Closure Scope Isolation
+print "5. Scope Isolation:";
+var counter1 = makeCounter();
+var counter2 = makeCounter();
+
+print "Counter 1:";
+counter1();  // 1
+counter1();  // 2
+
+print "Counter 2:";
+counter2();  // 1
+counter2();  // 2
+counter2();  // 3
+
+// 6. Global Variable Interaction
+print "6. Global Variable Interaction:";
+var globalVar = 1000;
+
+fun makeGlobalModifier() {
+  fun modify(amount) {
+    globalVar = globalVar + amount;
+    print globalVar;
+  }
+  return modify;
+}
+
+var modifier = makeGlobalModifier();
+modifier(50);   // 1050
+modifier(-25);  // 1025
+
+// 7. Variable Lifetime
+print "7. Variable Lifetime:";
+var savedClosure;
+
+{
+  var localVar = 42;
+  fun captureClosure() {
+    print localVar;
+  }
+  savedClosure = captureClosure;
+  print localVar;  // 42
+}
+
+// localVar is out of scope here, but closure still has access
+savedClosure();  // 42
+
+// 8. Complex Example - Accumulator
+print "8. Accumulator:";
+fun makeAccumulator() {
+  var sum = 0;
+  var count = 0;
+  
+  fun add(value) {
+    sum = sum + value;
+    count = count + 1;
+    print sum;
+  }
+  
+  return add;
+}
+
+var acc = makeAccumulator();
+acc(10);  // 10
+acc(20);  // 30
+acc(5);   // 35
+
+// 9. Closure Parameter Shadowing
+print "9. Parameter Shadowing:";
+var x = 100;
+
+fun makeShadowTest(x) {
+  fun showX() {
+    print x;
+  }
+  return showX;
+}
+
+var shadowTest = makeShadowTest(42);
+shadowTest();  // 42 (parameter x, not global x)
+print x;       // 100 (global x unchanged)
+
+// 10. Multiple Levels of Nesting
+print "10. Multiple Nesting Levels:";
+fun level1() {
+  var a = 1;
+  
+  fun level2() {
+    var b = 2;
+    print a;
+    print b;
+    print a + b;
+  }
+  
+  return level2;
+}
+
+var nested_func = level1();
+nested_func();  // 1, 2, 3
+
+print "=== Demo Complete ===";

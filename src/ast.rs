@@ -553,3 +553,28 @@ impl fmt::Display for TokenTree<'_> {
         self.inner.fmt(f)
     }
 }
+
+// visitor
+pub trait Visitor<'de> {
+    type Output;
+
+    fn visit_literal(&mut self, literal: &Literal<'de>) -> Self::Output;
+    fn visit_identifier(&mut self, identifier: &Identifier<'de>) -> Self::Output;
+    fn visit_unary_expression(&mut self, expr: &UnaryExpression<'de>) -> Self::Output;
+    fn visit_binary_expression(&mut self, expr: &BinaryExpression<'de>) -> Self::Output;
+    fn visit_group_expression(&mut self, expr: &GroupExpression<'de>) -> Self::Output;
+    fn visit_assignment_expression(&mut self, expr: &AssignmentExpression<'de>) -> Self::Output;
+    fn visit_call_expression(&mut self, expr: &CallExpression<'de>) -> Self::Output;
+    fn visit_member_expression(&mut self, expr: &MemberExpression<'de>) -> Self::Output;
+
+    fn visit_block_statement(&mut self, block: &BlockStatement<'de>) -> Self::Output;
+    fn visit_if_statement(&mut self, if_stmt: &IfStatement<'de>) -> Self::Output;
+    fn visit_while_statement(&mut self, while_stmt: &WhileStatement<'de>) -> Self::Output;
+    fn visit_for_statement(&mut self, for_stmt: &ForStatement<'de>) -> Self::Output;
+
+    fn visit_variable_declaration(&mut self, decl: &VariableDeclaration<'de>) -> Self::Output;
+    fn visit_function_declaration(&mut self, decl: &FunctionDeclaration<'de>) -> Self::Output;
+    fn visit_class_declaration(&mut self, decl: &ClassDeclaration<'de>) -> Self::Output;
+
+    fn visit_statement(&mut self, statement: &Statement<'de>) -> Self::Output;
+}
