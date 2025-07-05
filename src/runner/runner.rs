@@ -1,12 +1,13 @@
 use std::{
     borrow::Cow,
     cell::RefCell,
-    collections::HashMap,
     env,
     fmt::format,
     ops::{Deref, DerefMut},
     rc::Rc,
 };
+
+use rustc_hash::FxHashMap as HashMap;
 
 use crate::evaluator::ClosureBindingEnv;
 
@@ -76,14 +77,14 @@ pub struct Environment<'de>(pub Rc<EnvironmentInner<'de>>);
 impl<'de> Environment<'de> {
     pub fn new_global() -> Self {
         Self(Rc::new(EnvironmentInner {
-            bindings: RefCell::new(HashMap::new()),
+            bindings: RefCell::new(HashMap::default()),
             parent: None,
         }))
     }
 
     pub fn new_enclosed(&self) -> Self {
         Self(Rc::new(EnvironmentInner {
-            bindings: RefCell::new(HashMap::new()),
+            bindings: RefCell::new(HashMap::default()),
             parent: Some(self.clone()),
         }))
     }
@@ -313,7 +314,7 @@ impl<'de> Runner<'de> {
     pub fn run(mut self) -> Result<(), Error> {
         self.vm.call_stack.push(StackFrame::new(
             self.vm.current_env.clone(),
-            HashMap::new(),
+            HashMap::default(),
             None,
         ));
 

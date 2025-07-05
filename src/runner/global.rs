@@ -1,4 +1,5 @@
-use std::{cell::OnceCell, collections::HashMap};
+use rustc_hash::FxHashMap as HashMap;
+use std::cell::OnceCell;
 
 use chrono::Utc;
 use miette::Error;
@@ -26,7 +27,7 @@ pub struct Console {
 }
 impl Console {
     pub fn new<'de>() -> Value<'de> {
-        Value::new_object(HashMap::from([(
+        Value::new_object(HashMap::from_iter([(
             "log".to_string(),
             Value::new_native_function("log".to_string(), console::log),
         )]))

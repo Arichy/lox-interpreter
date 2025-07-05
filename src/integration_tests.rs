@@ -484,12 +484,12 @@ closure();"#;
 
 {
   var capturedVar = 5;
-  
+
   fun modify() {
     capturedVar = capturedVar * 2;
     print capturedVar;
   }
-  
+
   modifyClosure = modify;
   print capturedVar;
 }

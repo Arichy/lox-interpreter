@@ -2,10 +2,11 @@ use core::fmt;
 use std::{
     borrow::Cow,
     cell::RefCell,
-    collections::HashMap,
     ops::{Deref, DerefMut},
     rc::Rc,
 };
+
+use rustc_hash::FxHashMap as HashMap;
 
 use miette::{Error, LabeledSpan, SourceSpan};
 
@@ -918,7 +919,7 @@ impl<'de> Evaluator<'de> {
         func_decl: &FunctionDeclaration<'de>,
         vm: &Vm<'de>,
     ) -> ClosureBindingEnv<'de> {
-        let mut binding_env = HashMap::new();
+        let mut binding_env = HashMap::default();
 
         struct AstVisitor<'a, 'de> {
             func_decl: &'a FunctionDeclaration<'de>,
@@ -1139,7 +1140,6 @@ mod tests {
         runner::{Environment, Vm},
         Parser,
     };
-    use std::{borrow::Cow, collections::HashMap};
 
     #[test]
     fn test_collect_closure_binding_env_basic() {
