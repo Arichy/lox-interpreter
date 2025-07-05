@@ -109,20 +109,17 @@ pub struct StackFrame<'de> {
     pub return_value: Option<Value<'de>>,
     pub env_before_call: Environment<'de>,
     pub closure_binding_env: ClosureBindingEnv<'de>,
-    pub closure_env: Option<Environment<'de>>,
 }
 
 impl<'de> StackFrame<'de> {
     pub fn new(
         env_before_call: Environment<'de>,
         closure_binding_env: ClosureBindingEnv<'de>,
-        closure_env: Option<Environment<'de>>,
     ) -> Self {
         Self {
             env_before_call,
             return_value: None,
             closure_binding_env,
-            closure_env,
         }
     }
 }
@@ -187,8 +184,7 @@ impl<'de> Vm<'de> {
     ) {
         // 1. push a new stack frame with storing current environment
         let env_before_call = self.current_env.clone();
-        let new_stack_frame =
-            StackFrame::new(env_before_call, closure_binding_env, closure_env.clone());
+        let new_stack_frame = StackFrame::new(env_before_call, closure_binding_env);
         self.call_stack.push(new_stack_frame);
 
         // 2. create a new environment for the function call
@@ -315,7 +311,6 @@ impl<'de> Runner<'de> {
         self.vm.call_stack.push(StackFrame::new(
             self.vm.current_env.clone(),
             HashMap::default(),
-            None,
         ));
 
         self.vm.enter_scope();
