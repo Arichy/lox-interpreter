@@ -11,7 +11,17 @@ use miette::{Error, LabeledSpan, SourceSpan};
 
 use crate::{
     ast::{
-        AssignmentExpression, BlockStatement, Declaration, DeclarationInner, Expression, ExpressionInner, ForInit, ForInitInner, FunctionDeclaration, Identifier, LiteralInner, Op, Statement, StatementInner, TokenTree, Visitor
+        AssignmentExpression, AssignmentExpressionInner, BinaryExpression, BinaryExpressionInner,
+        BlockStatement, BlockStatementInner, BoolLiteral, BoolLiteralInner, CallExpression,
+        CallExpressionInner, ClassBody, ClassBodyInner, ClassDeclaration, ClassDeclarationInner,
+        Declaration, DeclarationInner, Expression, ExpressionInner, ForInit, ForInitInner,
+        ForStatement, ForStatementInner, FunctionDeclaration, FunctionDeclarationInner,
+        GroupExpression, GroupExpressionInner, Identifier, IdentifierInner, IfStatement,
+        IfStatementInner, Literal, LiteralInner, MemberExpression, MemberExpressionInner,
+        NilLiteral, NilLiteralInner, NumberLiteral, NumberLiteralInner, Op, Spanned, Statement,
+        StatementInner, StringLiteral, StringLiteralInner, TokenTree, TokenTreeInner,
+        UnaryExpression, UnaryExpressionInner, VariableDeclaration, VariableDeclarationInner,
+        Visitor, WhileStatement, WhileStatementInner,
     },
     error, log_stdout,
     runner::{global::console, Environment, Vm},
@@ -911,7 +921,7 @@ impl<'de> Evaluator<'de> {
         let mut binding_env = HashMap::new();
 
         struct AstVisitor<'a, 'de> {
-            func_decl: &'a crate::ast::FunctionDeclaration<'de>,
+            func_decl: &'a FunctionDeclaration<'de>,
             vm: &'a Vm<'de>,
             binding_env: &'a mut ClosureBindingEnv<'de>,
             local_vars: std::collections::HashSet<String>,
@@ -935,7 +945,7 @@ impl<'de> Evaluator<'de> {
         impl<'a, 'de> Visitor<'de> for AstVisitor<'a, 'de> {
             type Output = ();
 
-            fn visit_literal(&mut self, _literal: &crate::ast::Literal<'de>) -> Self::Output {}
+            fn visit_literal(&mut self, _literal: &Literal<'de>) -> Self::Output {}
 
             fn visit_identifier(&mut self, identifier: &Identifier<'de>) -> Self::Output {
                 let name = identifier.inner.name.as_ref();
@@ -962,25 +972,16 @@ impl<'de> Evaluator<'de> {
                 }
             }
 
-            fn visit_unary_expression(
-                &mut self,
-                expr: &crate::ast::UnaryExpression<'de>,
-            ) -> Self::Output {
+            fn visit_unary_expression(&mut self, expr: &UnaryExpression<'de>) -> Self::Output {
                 self.visit_expression_helper(&expr.inner.right);
             }
 
-            fn visit_binary_expression(
-                &mut self,
-                expr: &crate::ast::BinaryExpression<'de>,
-            ) -> Self::Output {
+            fn visit_binary_expression(&mut self, expr: &BinaryExpression<'de>) -> Self::Output {
                 self.visit_expression_helper(&expr.inner.left);
                 self.visit_expression_helper(&expr.inner.right);
             }
 
-            fn visit_group_expression(
-                &mut self,
-                expr: &crate::ast::GroupExpression<'de>,
-            ) -> Self::Output {
+            fn visit_group_expression(&mut self, expr: &GroupExpression<'de>) -> Self::Output {
                 self.visit_expression_helper(&expr.inner.expression);
             }
 
@@ -992,20 +993,14 @@ impl<'de> Evaluator<'de> {
                 // Note: assignment target is handled separately as it may introduce new local variables
             }
 
-            fn visit_call_expression(
-                &mut self,
-                expr: &crate::ast::CallExpression<'de>,
-            ) -> Self::Output {
+            fn visit_call_expression(&mut self, expr: &CallExpression<'de>) -> Self::Output {
                 self.visit_expression_helper(&expr.inner.callee);
                 for arg in &expr.inner.arguments {
                     self.visit_expression_helper(arg);
                 }
             }
 
-            fn visit_member_expression(
-                &mut self,
-                expr: &crate::ast::MemberExpression<'de>,
-            ) -> Self::Output {
+            fn visit_member_expression(&mut self, expr: &MemberExpression<'de>) -> Self::Output {
                 self.visit_expression_helper(&expr.inner.object);
                 self.visit_expression_helper(&expr.inner.property);
             }
@@ -1016,10 +1011,7 @@ impl<'de> Evaluator<'de> {
                 }
             }
 
-            fn visit_if_statement(
-                &mut self,
-                if_stmt: &crate::ast::IfStatement<'de>,
-            ) -> Self::Output {
+            fn visit_if_statement(&mut self, if_stmt: &IfStatement<'de>) -> Self::Output {
                 self.visit_expression_helper(&if_stmt.inner.test);
                 self.visit_statement(&if_stmt.inner.consequent);
                 if let Some(alternate) = &if_stmt.inner.alternate {
@@ -1027,18 +1019,12 @@ impl<'de> Evaluator<'de> {
                 }
             }
 
-            fn visit_while_statement(
-                &mut self,
-                while_stmt: &crate::ast::WhileStatement<'de>,
-            ) -> Self::Output {
+            fn visit_while_statement(&mut self, while_stmt: &WhileStatement<'de>) -> Self::Output {
                 self.visit_expression_helper(&while_stmt.inner.test);
                 self.visit_statement(&while_stmt.inner.body);
             }
 
-            fn visit_for_statement(
-                &mut self,
-                for_stmt: &crate::ast::ForStatement<'de>,
-            ) -> Self::Output {
+            fn visit_for_statement(&mut self, for_stmt: &ForStatement<'de>) -> Self::Output {
                 if let Some(init) = &for_stmt.inner.init {
                     match &init.inner {
                         ForInitInner::VariableDeclaration(decl) => {
@@ -1060,7 +1046,7 @@ impl<'de> Evaluator<'de> {
 
             fn visit_variable_declaration(
                 &mut self,
-                decl: &crate::ast::VariableDeclaration<'de>,
+                decl: &VariableDeclaration<'de>,
             ) -> Self::Output {
                 // Add the variable to local variables
                 self.local_vars
@@ -1074,7 +1060,7 @@ impl<'de> Evaluator<'de> {
 
             fn visit_function_declaration(
                 &mut self,
-                decl: &crate::ast::FunctionDeclaration<'de>,
+                decl: &FunctionDeclaration<'de>,
             ) -> Self::Output {
                 // Add the function name to local variables
                 self.local_vars
@@ -1083,10 +1069,7 @@ impl<'de> Evaluator<'de> {
                 // Note: We don't visit the function body as it has its own scope
             }
 
-            fn visit_class_declaration(
-                &mut self,
-                decl: &crate::ast::ClassDeclaration<'de>,
-            ) -> Self::Output {
+            fn visit_class_declaration(&mut self, decl: &ClassDeclaration<'de>) -> Self::Output {
                 // Add the class name to local variables
                 self.local_vars
                     .insert(decl.inner.id.inner.name.as_ref().to_string());
@@ -1334,8 +1317,8 @@ mod tests {
         };
 
         // Create variable declaration inside function (should not be captured)
-        let inner_var_decl = crate::ast::VariableDeclaration {
-            inner: crate::ast::VariableDeclarationInner {
+        let inner_var_decl = VariableDeclaration {
+            inner: VariableDeclarationInner {
                 id: Identifier {
                     inner: IdentifierInner {
                         name: Cow::Borrowed(inner_var_name),
@@ -1352,8 +1335,8 @@ mod tests {
 
         // Create statement that declares the inner variable
         let var_decl_stmt = Statement {
-            inner: StatementInner::Declaration(crate::ast::Declaration {
-                inner: crate::ast::DeclarationInner::Variable(inner_var_decl),
+            inner: StatementInner::Declaration(Declaration {
+                inner: DeclarationInner::Variable(inner_var_decl),
                 range: (0, 0),
             }),
             range: (0, 0),
@@ -1382,8 +1365,8 @@ mod tests {
         };
 
         // Create function declaration
-        let func_decl = crate::ast::FunctionDeclaration {
-            inner: crate::ast::FunctionDeclarationInner {
+        let func_decl = FunctionDeclaration {
+            inner: FunctionDeclarationInner {
                 name: Identifier {
                     inner: IdentifierInner {
                         name: Cow::Borrowed("test_func"),
@@ -1449,8 +1432,8 @@ mod tests {
         };
 
         // Local variable declaration
-        let local_var_decl = crate::ast::VariableDeclaration {
-            inner: crate::ast::VariableDeclarationInner {
+        let local_var_decl = VariableDeclaration {
+            inner: VariableDeclarationInner {
                 id: Identifier {
                     inner: IdentifierInner {
                         name: Cow::Borrowed(local_var),
@@ -1472,8 +1455,8 @@ mod tests {
 
         // Statement declaring local variable
         let local_var_stmt = Statement {
-            inner: StatementInner::Declaration(crate::ast::Declaration {
-                inner: crate::ast::DeclarationInner::Variable(local_var_decl),
+            inner: StatementInner::Declaration(Declaration {
+                inner: DeclarationInner::Variable(local_var_decl),
                 range: (0, 0),
             }),
             range: (0, 0),
@@ -1535,8 +1518,8 @@ mod tests {
         };
 
         // Create function declaration
-        let func_decl = crate::ast::FunctionDeclaration {
-            inner: crate::ast::FunctionDeclarationInner {
+        let func_decl = FunctionDeclaration {
+            inner: FunctionDeclarationInner {
                 name: Identifier {
                     inner: IdentifierInner {
                         name: Cow::Borrowed("comprehensive_func"),
