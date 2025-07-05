@@ -758,7 +758,7 @@ impl<'de> Evaluator<'de> {
                 }
 
                 _ => {
-                    todo!("function and class declarations are not yet implemented");
+                    todo!("class declaration is not yet implemented");
                 }
             },
 
@@ -949,50 +949,30 @@ impl<'de> Evaluator<'de> {
     }
 
     // for simplicity, we try to collect all variables used in the function body
-    fn collect_closure_binding_env(
+    fn collect_closure_binding_env<'ast, 'vm>(
         &self,
-        func_decl: &FunctionDeclaration<'de>,
-        vm: &Vm<'de>,
+        func_decl: &'ast FunctionDeclaration<'de>,
+        vm: &'vm Vm<'de>,
     ) -> ClosureBindingEnv<'de> {
         let mut binding_env = HashMap::default();
 
-        struct AstVisitor<'a, 'de> {
-            func_decl: &'a FunctionDeclaration<'de>,
-            vm: &'a Vm<'de>,
-            binding_env: &'a mut ClosureBindingEnv<'de>,
+        struct AstVisitor<'ast, 'vm, 'de, 'local> {
+            func_decl: &'ast FunctionDeclaration<'de>,
+            vm: &'vm Vm<'de>,
+            binding_env: &'local mut ClosureBindingEnv<'de>,
             local_vars: std::collections::HashSet<String>,
         }
 
-        impl<'a, 'de> AstVisitor<'a, 'de> {
-            fn visit_expression_helper(&mut self, expression: &Expression<'de>) {
-                match &expression.inner {
-                    ExpressionInner::Literal(lit) => self.visit_literal(lit),
-                    ExpressionInner::Identifier(id) => self.visit_identifier(id),
-                    ExpressionInner::Unary(unary) => self.visit_unary_expression(unary),
-                    ExpressionInner::Binary(binary) => self.visit_binary_expression(binary),
-                    ExpressionInner::Group(group) => self.visit_group_expression(group),
-                    ExpressionInner::Assignment(assign) => self.visit_assignment_expression(assign),
-                    ExpressionInner::Call(call) => self.visit_call_expression(call),
-                    ExpressionInner::Member(member) => self.visit_member_expression(member),
-                }
-            }
-        }
-
-        impl<'a, 'de> Visitor<'de> for AstVisitor<'a, 'de> {
+        impl<'ast, 'vm, 'de, 'local> Visitor<'ast, 'de> for AstVisitor<'ast, 'vm, 'de, 'local> {
             type Output = ();
 
-            fn visit_literal(&mut self, _literal: &Literal<'de>) -> Self::Output {}
-
-            fn visit_identifier(&mut self, identifier: &Identifier<'de>) -> Self::Output {
+            fn visit_identifier(&mut self, identifier: &'ast Identifier<'de>) -> Self::Output {
                 let name = identifier.inner.name.as_ref();
-
-                // let globalBindings = self.vm.global.bindings.borrow();
-                // println!("global: {globalBindings:?}");
-                // println!("local: {:?}", self.local_vars);
 
                 // @FIXME: maybe we need to remove `&& !self.vm.global.bindings.borrow().contains_key(name)`
                 // because closure_binding_env is used to tell if a function is pure.
                 // But if a global non-pure function is called, the function is not pure, but we'll regard it as pure, which is not correct.
+
                 // If it's not a local variable, check if it's in the environment
                 if !self.local_vars.contains(name)
                     && !self.vm.global.bindings.borrow().contains_key(name)
@@ -1011,81 +991,17 @@ impl<'de> Evaluator<'de> {
                 }
             }
 
-            fn visit_unary_expression(&mut self, expr: &UnaryExpression<'de>) -> Self::Output {
-                self.visit_expression_helper(&expr.inner.right);
-            }
-
-            fn visit_binary_expression(&mut self, expr: &BinaryExpression<'de>) -> Self::Output {
-                self.visit_expression_helper(&expr.inner.left);
-                self.visit_expression_helper(&expr.inner.right);
-            }
-
-            fn visit_group_expression(&mut self, expr: &GroupExpression<'de>) -> Self::Output {
-                self.visit_expression_helper(&expr.inner.expression);
-            }
-
             fn visit_assignment_expression(
                 &mut self,
-                expr: &AssignmentExpression<'de>,
+                expr: &'ast AssignmentExpression<'de>,
             ) -> Self::Output {
-                self.visit_expression_helper(&expr.inner.right);
+                self.visit_expression(&expr.inner.right);
                 // Note: assignment target is handled separately as it may introduce new local variables
-            }
-
-            fn visit_call_expression(&mut self, expr: &CallExpression<'de>) -> Self::Output {
-                self.visit_expression_helper(&expr.inner.callee);
-                for arg in &expr.inner.arguments {
-                    self.visit_expression_helper(arg);
-                }
-            }
-
-            fn visit_member_expression(&mut self, expr: &MemberExpression<'de>) -> Self::Output {
-                self.visit_expression_helper(&expr.inner.object);
-                self.visit_expression_helper(&expr.inner.property);
-            }
-
-            fn visit_block_statement(&mut self, block: &BlockStatement<'de>) -> Self::Output {
-                for stmt in &block.inner.statements {
-                    self.visit_statement(stmt);
-                }
-            }
-
-            fn visit_if_statement(&mut self, if_stmt: &IfStatement<'de>) -> Self::Output {
-                self.visit_expression_helper(&if_stmt.inner.test);
-                self.visit_statement(&if_stmt.inner.consequent);
-                if let Some(alternate) = &if_stmt.inner.alternate {
-                    self.visit_statement(alternate);
-                }
-            }
-
-            fn visit_while_statement(&mut self, while_stmt: &WhileStatement<'de>) -> Self::Output {
-                self.visit_expression_helper(&while_stmt.inner.test);
-                self.visit_statement(&while_stmt.inner.body);
-            }
-
-            fn visit_for_statement(&mut self, for_stmt: &ForStatement<'de>) -> Self::Output {
-                if let Some(init) = &for_stmt.inner.init {
-                    match &init.inner {
-                        ForInitInner::VariableDeclaration(decl) => {
-                            self.visit_variable_declaration(decl);
-                        }
-                        ForInitInner::Expression(expr) => {
-                            self.visit_expression_helper(expr);
-                        }
-                    }
-                }
-                if let Some(test) = &for_stmt.inner.test {
-                    self.visit_expression_helper(test);
-                }
-                if let Some(update) = &for_stmt.inner.update {
-                    self.visit_expression_helper(update);
-                }
-                self.visit_statement(&for_stmt.inner.body);
             }
 
             fn visit_variable_declaration(
                 &mut self,
-                decl: &VariableDeclaration<'de>,
+                decl: &'ast VariableDeclaration<'de>,
             ) -> Self::Output {
                 // Add the variable to local variables
                 self.local_vars
@@ -1093,13 +1009,13 @@ impl<'de> Evaluator<'de> {
 
                 // Visit the initializer if present
                 if let Some(init) = &decl.inner.init {
-                    self.visit_expression_helper(init);
+                    self.visit_expression(init);
                 }
             }
 
             fn visit_function_declaration(
                 &mut self,
-                decl: &FunctionDeclaration<'de>,
+                decl: &'ast FunctionDeclaration<'de>,
             ) -> Self::Output {
                 // Add the function name to local variables
                 self.local_vars
@@ -1112,38 +1028,6 @@ impl<'de> Evaluator<'de> {
                 // Add the class name to local variables
                 self.local_vars
                     .insert(decl.inner.id.inner.name.as_ref().to_string());
-            }
-
-            fn visit_statement(&mut self, statement: &Statement<'de>) -> Self::Output {
-                match &statement.inner {
-                    StatementInner::Expression(expr) => {
-                        self.visit_expression_helper(expr);
-                    }
-                    StatementInner::Print(expr) => {
-                        self.visit_expression_helper(expr);
-                    }
-                    StatementInner::Return(expr) => {
-                        if let Some(expr) = expr {
-                            self.visit_expression_helper(expr);
-                        }
-                    }
-                    StatementInner::Block(block) => self.visit_block_statement(block),
-                    StatementInner::Declaration(decl) => match &decl.inner {
-                        DeclarationInner::Variable(var_decl) => {
-                            self.visit_variable_declaration(var_decl)
-                        }
-                        DeclarationInner::Function(func_decl) => {
-                            self.visit_function_declaration(func_decl)
-                        }
-                        DeclarationInner::Class(class_decl) => {
-                            self.visit_class_declaration(class_decl)
-                        }
-                    },
-                    StatementInner::If(if_stmt) => self.visit_if_statement(if_stmt),
-                    StatementInner::While(while_stmt) => self.visit_while_statement(while_stmt),
-                    StatementInner::For(for_stmt) => self.visit_for_statement(for_stmt),
-                    StatementInner::Break | StatementInner::Continue => {}
-                }
             }
         }
 

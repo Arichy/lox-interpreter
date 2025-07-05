@@ -1,4 +1,5 @@
 use miette::{Context, Error, LabeledSpan, WrapErr};
+use rustc_hash::FxHashSet as HashSet;
 use std::{borrow::Cow, collections::HashMap, fmt};
 
 use crate::{
@@ -11,7 +12,7 @@ use crate::{
         LiteralInner, NilLiteral, NilLiteralInner, NumberLiteral, NumberLiteralInner, Op,
         Statement, StatementInner, StringLiteral, StringLiteralInner, TokenTree, TokenTreeInner,
         UnaryExpression, UnaryExpressionInner, VariableDeclaration, VariableDeclarationInner,
-        WhileStatement, WhileStatementInner,
+        Visitor, WhileStatement, WhileStatementInner,
     },
     error::{self, Eof},
     lexer::{Token, TokenKind},
@@ -86,10 +87,82 @@ impl BindingPower {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, PartialEq, Eq)]
+pub enum ScopeType {
+    Global,
+    Module,
+    Enclosed,
+}
+#[derive(Debug)]
+pub struct Scope<'de> {
+    pub scope_type: ScopeType,
+    pub bindings: HashMap<Cow<'de, str>, (usize, usize)>,
+}
+
+impl<'de> Scope<'de> {
+    pub fn new(scope_type: ScopeType) -> Self {
+        Self {
+            scope_type,
+            bindings: HashMap::default(),
+        }
+    }
+
+    pub fn is_global(&self) -> bool {
+        self.scope_type == ScopeType::Global
+    }
+
+    pub fn is_module(&self) -> bool {
+        self.scope_type == ScopeType::Module
+    }
+
+    pub fn is_enclosed(&self) -> bool {
+        self.scope_type == ScopeType::Enclosed
+    }
+}
+
+#[derive(Debug)]
+pub struct ParserState<'de> {
+    scopes: Vec<Scope<'de>>,
+}
+impl<'de> ParserState<'de> {
+    pub fn new() -> Self {
+        Self {
+            scopes: vec![Scope::new(ScopeType::Global)],
+        }
+    }
+
+    pub fn push_scope(&mut self, scope_type: ScopeType) {
+        self.scopes.push(Scope::new(scope_type))
+    }
+
+    pub fn pop_scope(&mut self) -> bool {
+        self.scopes.pop().is_some()
+    }
+
+    pub fn current_scope(&self) -> Result<&Scope, Error> {
+        self.scopes.last().ok_or_else(|| {
+            error::ParseInternalError {
+                message: "".to_string(),
+            }
+            .into()
+        })
+    }
+
+    pub fn current_scope_mut(&mut self) -> Result<&mut Scope<'de>, Error> {
+        self.scopes.last_mut().ok_or_else(|| {
+            error::ParseInternalError {
+                message: "".to_string(),
+            }
+            .into()
+        })
+    }
+}
+
+#[derive(Debug)]
 pub struct Parser<'de> {
     whole: &'de str,
     lexer: Lexer<'de>,
+    state: ParserState<'de>,
 }
 
 fn prefix_binding_power(op: Op) -> ((), BindingPower) {
@@ -145,10 +218,14 @@ impl<'de> Parser<'de> {
         Self {
             whole: input,
             lexer: Lexer::new(input),
+            state: ParserState::new(),
         }
     }
 
     pub fn parse(&mut self) -> Result<Vec<Statement<'de>>, Error> {
+        self.state.push_scope(ScopeType::Global);
+        self.state.push_scope(ScopeType::Module);
+
         let mut statements = vec![];
         loop {
             match self.parse_statement() {
@@ -159,12 +236,23 @@ impl<'de> Parser<'de> {
                     break;
                 }
                 Err(err) => {
+                    self.state.pop_scope();
                     return Err(err);
                 }
             }
         }
 
+        self.state.pop_scope();
+        self.state.pop_scope();
         Ok(statements)
+    }
+
+    pub fn whole(&self) -> &str {
+        self.whole
+    }
+
+    pub fn state(&self) -> &ParserState {
+        &self.state
     }
 
     pub fn parse_expression(&mut self) -> Result<Option<Expression<'de>>, Error> {
@@ -174,6 +262,7 @@ impl<'de> Parser<'de> {
     pub fn parse_block(
         &mut self,
         processed_left_brace: Option<Token<'de>>,
+        parameters: Option<&[Token<'de>]>, // for function
     ) -> Result<BlockStatement<'de>, Error> {
         let left_brace = match processed_left_brace {
             Some(token) => token,
@@ -182,6 +271,19 @@ impl<'de> Parser<'de> {
                 .expect(TokenKind::LeftBrace, "missing {")
                 .wrap_err("in block expression")?,
         };
+
+        self.state.push_scope(ScopeType::Enclosed);
+
+        if let Some(parameters) = parameters {
+            let bindings = &mut self.state.current_scope_mut()?.bindings;
+            for param in parameters {
+                if bindings.contains_key(&Cow::Borrowed(param.origin)) {}
+                bindings.insert(
+                    Cow::Borrowed(param.origin),
+                    (param.offset, param.offset + param.origin.len()),
+                );
+            }
+        }
 
         let mut statements = vec![];
 
@@ -202,6 +304,8 @@ impl<'de> Parser<'de> {
                 range: (left_brace.offset, end),
             };
             self.lexer.next(); // consume the right brace
+
+            self.state.pop_scope();
             return Ok(block);
         }
 
@@ -241,6 +345,8 @@ impl<'de> Parser<'de> {
             inner: BlockStatementInner { statements },
             range: (start, end),
         };
+
+        self.state.pop_scope();
 
         Ok(block)
     }
@@ -362,6 +468,14 @@ impl<'de> Parser<'de> {
                 if let Some(semi_offset) = self.maybe_semicolon() {
                     range.1 = semi_offset;
                 }
+
+                // validate AST
+                variable_declaration.validate(self)?;
+
+                self.state.current_scope_mut()?.bindings.insert(
+                    variable_declaration.id.name.clone(),
+                    variable_declaration.id.range,
+                );
 
                 Statement {
                     range: variable_declaration.range,
@@ -603,7 +717,7 @@ impl<'de> Parser<'de> {
                 offset,
             } => {
                 let block = self
-                    .parse_block(Some(left_brace_token))
+                    .parse_block(Some(left_brace_token), None)
                     .wrap_err("in block expression")?;
 
                 let range = (offset, block.range.1);
@@ -722,6 +836,7 @@ impl<'de> Parser<'de> {
                 };
 
                 let mut parameters = Vec::new();
+                let mut parameters_bindings: HashMap<&str, (usize, usize)> = HashMap::default();
 
                 self.lexer
                     .expect(TokenKind::LeftParen, "missing (")
@@ -745,7 +860,21 @@ impl<'de> Parser<'de> {
                                 format!("in parameter #{} of function {name}", parameters.len() + 1)
                             })?;
 
+                        if let Some(range) = parameters_bindings.get(parameter.origin) {
+                            return Err(error::RedeclarationError {
+                                src: self.whole().to_string(),
+                                name: parameter.origin.to_string(),
+                                err_span: (parameter.offset, parameter.origin.len()).into(),
+                                existing_span: (range.0..range.1).into(),
+                            }
+                            .into());
+                        }
+
                         parameters.push(parameter);
+                        parameters_bindings.insert(
+                            parameter.origin,
+                            (parameter.offset, parameter.offset + parameter.origin.len()),
+                        );
 
                         let token = self
                             .lexer
@@ -764,7 +893,7 @@ impl<'de> Parser<'de> {
                 }
 
                 let block = self
-                    .parse_block(None)
+                    .parse_block(None, Some(&parameters))
                     .wrap_err_with(|| format!("in body of function {name}"))?;
 
                 let range = (offset, block.range.1);
@@ -1427,6 +1556,131 @@ impl<'de> Iterator for Parser<'de> {
             Ok(Some(statement)) => Some(Ok(statement)),
             Ok(None) => None,
             Err(err) => Some(Err(err)),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn test_self_initialization() {
+        {
+            let code = r#"
+                var a = "value";
+                var a = a;      // This is allowed in global scope
+                print a;        // Should print "value"
+            "#;
+
+            let mut parser = Parser::new(code);
+
+            let res = parser.parse();
+
+            assert!(res.is_ok());
+        }
+
+        {
+            let code = r#"
+                var a = "outer";
+                {
+                    var a = a;  // Error: Can't read local variable in its own initializer
+                }
+            "#;
+
+            let mut parser = Parser::new(code);
+
+            let res = parser.parse();
+
+            assert!(res.is_err());
+        }
+
+        {
+            let code = r#"
+                fun returnArg(arg) {
+                    return arg;
+                }
+
+                var b = "global";
+                {
+                    var a = "first";
+                    var b = returnArg(b);    // Error: Can't read local variable in its own initializer
+                    print b;
+                }
+
+                var b = b + " updated";
+                print b;
+            "#;
+
+            let mut parser = Parser::new(code);
+            let res = parser.parse();
+            assert!(res.is_err());
+        }
+    }
+
+    #[test]
+    fn variable_redeclaration() {
+        {
+            let code = r#"
+                {
+                  var a = "value";
+                  var a = "other";
+                }
+            "#;
+
+            let mut parser = Parser::new(code);
+            let res = parser.parse();
+            println!("{res:?}");
+            assert!(res.is_err());
+        }
+
+        {
+            let code = r#"
+                fun foo(a) {
+                  var a;
+                }
+            "#;
+
+            let mut parser = Parser::new(code);
+            let res = parser.parse();
+            println!("{res:?}");
+            assert!(res.is_err())
+        }
+
+        {
+            let code = r#"
+                fun foo(arg, arg) {
+                  "body";
+                }
+            "#;
+
+            let mut parser = Parser::new(code);
+            let res = parser.parse();
+            println!("{res:?}");
+            assert!(res.is_err())
+        }
+
+        {
+            let code = r#"
+                var a = "1";
+                print a;
+
+                var a;
+                print a;
+
+                var a = "2";
+                print a;
+
+                {
+                  var a = "1";
+                  var a = "2";
+                  print a;
+                }
+            "#;
+
+            let mut parser = Parser::new(code);
+            let res = parser.parse();
+            println!("{res:?}");
+            assert!(res.is_err())
         }
     }
 }

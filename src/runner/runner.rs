@@ -30,8 +30,16 @@ use crate::{
     },
 };
 
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum EnvironmentType {
+    Global,
+    Module,
+    Enclosed,
+}
+
 #[derive(Debug)]
 pub struct EnvironmentInner<'de> {
+    env_type: EnvironmentType, // Unique identifier for the environment
     pub bindings: RefCell<HashMap<String, Value<'de>>>,
     pub parent: Option<Environment<'de>>,
 }
@@ -83,16 +91,34 @@ pub struct Environment<'de>(pub Rc<EnvironmentInner<'de>>);
 impl<'de> Environment<'de> {
     pub fn new_global() -> Self {
         Self(Rc::new(EnvironmentInner {
+            env_type: EnvironmentType::Global,
             bindings: RefCell::new(HashMap::default()),
             parent: None,
         }))
     }
 
+    pub fn new_module(global: Environment<'de>) -> Self {
+        Self(Rc::new(EnvironmentInner {
+            env_type: EnvironmentType::Module,
+            bindings: RefCell::new(HashMap::default()),
+            parent: Some(global),
+        }))
+    }
+
     pub fn new_enclosed(&self) -> Self {
         Self(Rc::new(EnvironmentInner {
+            env_type: EnvironmentType::Enclosed,
             bindings: RefCell::new(HashMap::default()),
             parent: Some(self.clone()),
         }))
+    }
+
+    pub fn is_global(&self) -> bool {
+        self.0.env_type == EnvironmentType::Global
+    }
+
+    pub fn is_module(&self) -> bool {
+        self.0.env_type == EnvironmentType::Module
     }
 }
 
@@ -173,16 +199,41 @@ impl<'de> Vm<'de> {
         self.global.define("console".to_string(), console);
     }
 
+    pub fn enter_module(&mut self) {
+        // Create a new module environment
+        let new_env = Environment::new_module(self.global.clone());
+        // Set the current environment to the new module environment
+        self.current_env = new_env;
+    }
+
+    pub fn leave_module(&mut self) -> Result<(), Error> {
+        // Check if we are in a module environment
+        if self.current_env.env_type == EnvironmentType::Module {
+            // If so, revert to the global environment
+            self.current_env = self.global.clone();
+            Ok(())
+        } else {
+            Err(error::RuntimeError::InternalError {
+                message: "Cannot leave non-module environment".to_string(),
+            }
+            .into())
+        }
+    }
+
     pub fn enter_scope(&mut self) {
         let new_env = self.current_env.new_enclosed();
         self.current_env = new_env;
     }
 
-    pub fn leave_scope(&mut self) {
+    pub fn leave_scope(&mut self) -> Result<(), Error> {
         if let Some(parent) = &self.current_env.parent {
             self.current_env = parent.clone();
+            Ok(())
         } else {
-            panic!("Cannot leave global scope");
+            Err(error::RuntimeError::InternalError {
+                message: "Cannot leave scope, no parent environment found".to_string(),
+            }
+            .into())
         }
     }
 
@@ -326,7 +377,8 @@ impl<'de> Runner<'de> {
             HashMap::default(),
         ));
 
-        self.vm.enter_scope();
+        self.vm.enter_module();
+
         loop {
             let statement = self.evaluator.parser.next();
             match statement {
@@ -340,7 +392,8 @@ impl<'de> Runner<'de> {
                 None => break,
             }
         }
-        self.vm.leave_scope();
+
+        self.vm.leave_module();
 
         self.vm.call_stack.pop().ok_or_else(|| {
             miette!(error::RuntimeError::InternalError {

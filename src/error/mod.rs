@@ -69,6 +69,27 @@ pub struct SyntaxError {
     pub err_span: SourceSpan,
 }
 
+#[derive(Diagnostic, Debug, Error)]
+#[error("RedeclarationError: Already a variable with name `{name}` in this scope.")]
+pub struct RedeclarationError {
+    #[source_code]
+    pub src: String,
+
+    pub name: String,
+
+    #[label = "`{name}` already exists"]
+    pub existing_span: SourceSpan,
+
+    #[label]
+    pub err_span: SourceSpan,
+}
+
+#[derive(Diagnostic, Debug, Error)]
+#[error("ParseInternalError: {message}")]
+pub struct ParseInternalError {
+    pub message: String,
+}
+
 // #[derive(Diagnostic, Debug, Error)]
 // #[error("Unexpected token tree")]
 // pub struct UnexpectedTokenTree {
