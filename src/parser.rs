@@ -121,13 +121,20 @@ impl<'de> Scope<'de> {
 }
 
 #[derive(Debug)]
+struct FunctionContext {
+    depth: u32,
+}
+
+#[derive(Debug)]
 pub struct ParserState<'de> {
     scopes: Vec<Scope<'de>>,
+    function_context: FunctionContext,
 }
 impl<'de> ParserState<'de> {
     pub fn new() -> Self {
         Self {
             scopes: vec![Scope::new(ScopeType::Global)],
+            function_context: FunctionContext { depth: 0 },
         }
     }
 
@@ -754,22 +761,15 @@ impl<'de> Parser<'de> {
                 offset,
                 origin,
             } => {
-                // match self.lexer.peek() {
-                //     Some(Ok(Token {
-                //         kind: TokenKind::Semicolon,
-                //         offset: peek_offset,
-                //         ..
-                //     })) => {
-                //         // return without value
-                //         self.lexer.next(); // consume the semicolon
-                //         return Ok(Some(Statement {
-                //             range: (offset, *peek_offset),
-                //             inner: StatementInner::Return(None),
-                //         }));
-                //     }
-                //     Some(Err(e)) => {}
-                //     _ => {}
-                // }
+                if self.state.function_context.depth == 0 {
+                    return Err(error::SyntaxError {
+                        src: self.whole.to_string(),
+                        message: "return statement is not allowed outside of a function"
+                            .to_string(),
+                        err_span: (offset..offset + origin.len()).into(),
+                    }
+                    .into());
+                }
 
                 let peek = self.lexer.peek();
 
@@ -892,9 +892,21 @@ impl<'de> Parser<'de> {
                     }
                 }
 
+                self.state.function_context.depth += 1;
+
                 let block = self
                     .parse_block(None, Some(&parameters))
                     .wrap_err_with(|| format!("in body of function {name}"))?;
+
+                if self.state.function_context.depth == 0 {
+                    // If we are at the top level, we should not allow function declarations
+                    return Err(error::ParseInternalError {
+                        message: "Function depths should not be 0 at this point".to_string(),
+                    }
+                    .into());
+                }
+
+                self.state.function_context.depth -= 1;
 
                 let range = (offset, block.range.1);
 
@@ -1629,7 +1641,6 @@ mod tests {
 
             let mut parser = Parser::new(code);
             let res = parser.parse();
-            println!("{res:?}");
             assert!(res.is_err());
         }
 
@@ -1642,7 +1653,6 @@ mod tests {
 
             let mut parser = Parser::new(code);
             let res = parser.parse();
-            println!("{res:?}");
             assert!(res.is_err())
         }
 
@@ -1655,7 +1665,6 @@ mod tests {
 
             let mut parser = Parser::new(code);
             let res = parser.parse();
-            println!("{res:?}");
             assert!(res.is_err())
         }
 
@@ -1674,6 +1683,66 @@ mod tests {
                   var a = "1";
                   var a = "2";
                   print a;
+                }
+            "#;
+
+            let mut parser = Parser::new(code);
+            let res = parser.parse();
+            assert!(res.is_err())
+        }
+    }
+
+    #[test]
+    fn invalid_return() {
+        {
+            let code = r#"
+               fun foo() {
+                    return "at function scope is ok";
+                }
+
+                return;
+            "#;
+
+            let mut parser = Parser::new(code);
+            let res = parser.parse();
+            println!("{res:?}");
+            assert!(res.is_err())
+        }
+
+        {
+            let code = r#"
+                fun foo() {
+                    if (true) {
+                        return "early return";
+                    }
+
+                    for (var i = 0; i < 10; i = i + 1) {
+                        return "loop return";
+                    }
+                }
+
+                if (true) {
+                    return "conditional return";
+                }
+            "#;
+
+            let mut parser = Parser::new(code);
+            let res = parser.parse();
+            println!("{res:?}");
+            assert!(res.is_err())
+        }
+
+        {
+            let code = r#"
+                {
+                    return "not allowed in a block either";
+                }
+
+                fun allowed() {
+                    if (true) {
+                        return "this is fine";
+                    }
+                    return;
                 }
             "#;
 
