@@ -14,15 +14,15 @@ use crate::{
     ast::{
         AssignmentExpression, AssignmentExpressionInner, BinaryExpression, BinaryExpressionInner,
         BlockStatement, BlockStatementInner, BoolLiteral, BoolLiteralInner, CallExpression,
-        CallExpressionInner, ClassBody, ClassBodyInner, ClassDeclaration, ClassDeclarationInner,
-        Declaration, DeclarationInner, Expression, ExpressionInner, ForInit, ForInitInner,
-        ForStatement, ForStatementInner, FunctionDeclaration, FunctionDeclarationInner,
-        GroupExpression, GroupExpressionInner, Identifier, IdentifierInner, IfStatement,
-        IfStatementInner, Literal, LiteralInner, MemberExpression, MemberExpressionInner,
-        NilLiteral, NilLiteralInner, NumberLiteral, NumberLiteralInner, Op, Spanned, Statement,
-        StatementInner, StringLiteral, StringLiteralInner, TokenTree, TokenTreeInner,
-        UnaryExpression, UnaryExpressionInner, VariableDeclaration, VariableDeclarationInner,
-        Visitor, WhileStatement, WhileStatementInner,
+        CallExpressionInner, ClassBodyItem, ClassBodyItemInner, ClassDeclaration,
+        ClassDeclarationInner, Declaration, DeclarationInner, Expression, ExpressionInner, ForInit,
+        ForInitInner, ForStatement, ForStatementInner, FunctionDeclaration,
+        FunctionDeclarationInner, GroupExpression, GroupExpressionInner, Identifier,
+        IdentifierInner, IfStatement, IfStatementInner, Literal, LiteralInner, MemberExpression,
+        MemberExpressionInner, NilLiteral, NilLiteralInner, NumberLiteral, NumberLiteralInner, Op,
+        Spanned, Statement, StatementInner, StringLiteral, StringLiteralInner, TokenTree,
+        TokenTreeInner, UnaryExpression, UnaryExpressionInner, VariableDeclaration,
+        VariableDeclarationInner, Visitor, WhileStatement, WhileStatementInner,
     },
     error, log_stdout,
     runner::{cache::build_cache_key, global::console, Environment, Vm},
@@ -757,9 +757,7 @@ impl<'de> Evaluator<'de> {
                     vm.define_variable(function_name, function_value);
                 }
 
-                _ => {
-                    todo!("class declaration is not yet implemented");
-                }
+                DeclarationInner::Class(class_decl) => {}
             },
 
             StatementInner::Expression(expr) => {

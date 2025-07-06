@@ -5,14 +5,15 @@ use std::{borrow::Cow, collections::HashMap, fmt};
 use crate::{
     ast::{
         self, BinaryExpression, BinaryExpressionInner, BlockStatement, BlockStatementInner,
-        BoolLiteral, BoolLiteralInner, CallExpression, CallExpressionInner, Declaration,
-        DeclarationInner, Expression, ExpressionInner, ForInit, ForInitInner, ForStatement,
-        ForStatementInner, FunctionDeclaration, FunctionDeclarationInner, GroupExpression,
-        GroupExpressionInner, Identifier, IdentifierInner, IfStatement, IfStatementInner, Literal,
-        LiteralInner, NilLiteral, NilLiteralInner, NumberLiteral, NumberLiteralInner, Op,
-        Statement, StatementInner, StringLiteral, StringLiteralInner, TokenTree, TokenTreeInner,
-        UnaryExpression, UnaryExpressionInner, VariableDeclaration, VariableDeclarationInner,
-        Visitor, WhileStatement, WhileStatementInner,
+        BoolLiteral, BoolLiteralInner, CallExpression, CallExpressionInner, ClassBody,
+        ClassBodyInner, ClassBodyItem, ClassBodyItemInner, ClassDeclaration, ClassDeclarationInner,
+        Declaration, DeclarationInner, Expression, ExpressionInner, ForInit, ForInitInner,
+        ForStatement, ForStatementInner, FunctionDeclaration, FunctionDeclarationInner,
+        GroupExpression, GroupExpressionInner, Identifier, IdentifierInner, IfStatement,
+        IfStatementInner, Literal, LiteralInner, NilLiteral, NilLiteralInner, NumberLiteral,
+        NumberLiteralInner, Op, Statement, StatementInner, StringLiteral, StringLiteralInner,
+        TokenTree, TokenTreeInner, UnaryExpression, UnaryExpressionInner, VariableDeclaration,
+        VariableDeclarationInner, Visitor, WhileStatement, WhileStatementInner,
     },
     error::{self, Eof},
     lexer::{Token, TokenKind},
@@ -305,12 +306,16 @@ impl<'de> Parser<'de> {
 
         if is_right_brace {
             // If the next token is a right brace, we can return an empty block
-            let end = left_brace.offset + 1; // +1 for the right brace
+            let right_brace = self
+                .lexer
+                .next()
+                .expect("checked above")
+                .expect("checked above"); // consume the right brace
+            let end = right_brace.offset; // +1 for the right brace
             let block = BlockStatement {
                 inner: BlockStatementInner { statements },
                 range: (left_brace.offset, end),
             };
-            self.lexer.next(); // consume the right brace
 
             self.state.pop_scope();
             return Ok(block);
@@ -811,9 +816,46 @@ impl<'de> Parser<'de> {
 
             Token {
                 kind: TokenKind::Class,
+                offset,
                 ..
             } => {
-                todo!("class declaration")
+                let ident = self
+                    .parse_identifier()
+                    .wrap_err("in class name declaration")?;
+
+                let has_super_class = matches!(
+                    self.lexer.peek(),
+                    Some(Ok(Token {
+                        kind: TokenKind::Less,
+                        ..
+                    }))
+                );
+
+                let superclass = if has_super_class {
+                    self.lexer.next();
+                    Some(self.parse_identifier()?)
+                } else {
+                    None
+                };
+
+                let class_body = self.parse_class_body()?;
+
+                let range = (offset, class_body.range.1);
+
+                Statement {
+                    range,
+                    inner: StatementInner::Declaration(Declaration {
+                        range,
+                        inner: DeclarationInner::Class(ClassDeclaration {
+                            range,
+                            inner: ClassDeclarationInner {
+                                id: ident,
+                                superclass,
+                                body: class_body,
+                            },
+                        }),
+                    }),
+                }
             }
 
             Token {
@@ -821,114 +863,13 @@ impl<'de> Parser<'de> {
                 offset,
                 origin,
             } => {
-                let ident = self
-                    .lexer
-                    .expect(TokenKind::Ident, "expected identifier")
-                    .wrap_err("in function name declaration")?;
-
-                let name = ident.origin;
-                // let ident = Ident::Ident(Cow::Borrowed(token.origin));
-                let ident = Identifier {
-                    range: (ident.offset, ident.offset + name.len()),
-                    inner: IdentifierInner {
-                        name: Cow::Borrowed(name),
-                    },
-                };
-
-                let mut parameters = Vec::new();
-                let mut parameters_bindings: HashMap<&str, (usize, usize)> = HashMap::default();
-
-                self.lexer
-                    .expect(TokenKind::LeftParen, "missing (")
-                    .wrap_err_with(|| format!("in parameter list of function {name}"))?;
-
-                if matches!(
-                    self.lexer.peek(),
-                    Some(Ok(Token {
-                        kind: TokenKind::RightParen,
-                        ..
-                    }))
-                ) {
-                    // immediate parameter list end
-                    self.lexer.next(); // consume the right paren
-                } else {
-                    loop {
-                        let parameter = self
-                            .lexer
-                            .expect(TokenKind::Ident, "unexpected token")
-                            .wrap_err_with(|| {
-                                format!("in parameter #{} of function {name}", parameters.len() + 1)
-                            })?;
-
-                        if let Some(range) = parameters_bindings.get(parameter.origin) {
-                            return Err(error::RedeclarationError {
-                                src: self.whole().to_string(),
-                                name: parameter.origin.to_string(),
-                                err_span: (parameter.offset, parameter.origin.len()).into(),
-                                existing_span: (range.0..range.1).into(),
-                            }
-                            .into());
-                        }
-
-                        parameters.push(parameter);
-                        parameters_bindings.insert(
-                            parameter.origin,
-                            (parameter.offset, parameter.offset + parameter.origin.len()),
-                        );
-
-                        let token = self
-                            .lexer
-                            .expect_where(
-                                |token| {
-                                    matches!(token.kind, TokenKind::RightParen | TokenKind::Comma)
-                                },
-                                "continuing parameter list",
-                            )
-                            .wrap_err_with(|| format!("in parameter list of function {name}"))?;
-
-                        if token.kind == TokenKind::RightParen {
-                            break;
-                        }
-                    }
-                }
-
-                self.state.function_context.depth += 1;
-
-                let block = self
-                    .parse_block(None, Some(&parameters))
-                    .wrap_err_with(|| format!("in body of function {name}"))?;
-
-                if self.state.function_context.depth == 0 {
-                    // If we are at the top level, we should not allow function declarations
-                    return Err(error::ParseInternalError {
-                        message: "Function depths should not be 0 at this point".to_string(),
-                    }
-                    .into());
-                }
-
-                self.state.function_context.depth -= 1;
-
-                let range = (offset, block.range.1);
+                let func_decl = self.parse_function(Some(offset))?;
+                let range = func_decl.range;
 
                 Statement {
                     inner: StatementInner::Declaration(Declaration {
                         range,
-                        inner: DeclarationInner::Function(FunctionDeclaration {
-                            range,
-                            inner: FunctionDeclarationInner {
-                                name: ident,
-                                parameters: parameters
-                                    .into_iter()
-                                    .map(|param| Identifier {
-                                        range: (param.offset, param.offset + param.origin.len()),
-                                        inner: IdentifierInner {
-                                            name: Cow::Borrowed(param.origin),
-                                        },
-                                    })
-                                    .collect(),
-                                body: Box::new(block),
-                            },
-                        }),
+                        inner: DeclarationInner::Function(func_decl),
                     }),
                     range,
                 }
@@ -1186,71 +1127,6 @@ impl<'de> Parser<'de> {
                 }
             }
 
-            // Token {
-            //     kind: TokenKind::Var,
-            //     offset,
-            //     origin,
-            // } => {
-            //     let token = self
-            //         .lexer
-            //         .expect(TokenKind::Ident, "expected identifier")
-            //         .wrap_err("in variable assignment")?;
-
-            //     // let ident = TokenTree::Atom(Atom::Ident(token.origin));
-            //     // let ident: TokenTree<'de> = TokenTree {
-            //     //     inner: TokenTreeInner::Atom(Atom::Ident(Cow::Borrowed(token.origin))),
-            //     //     range: (token.offset, token.offset + token.origin.len()),
-            //     // };
-
-            //     let identifier = Identifier {
-            //         inner: IdentifierInner {
-            //             name: Cow::Borrowed(token.origin),
-            //         },
-            //         range: (token.offset, token.offset + token.origin.len()),
-            //     };
-
-            //     // Prepare variable declaration result
-            //     let result = if matches!(
-            //         self.lexer.peek(),
-            //         Some(Ok(Token {
-            //             kind: TokenKind::Equal,
-            //             ..
-            //         }))
-            //     ) {
-            //         // Found equals sign, parse initialization expression
-            //         self.lexer
-            //             .expect(TokenKind::Equal, "missing =")
-            //             .wrap_err("in variable assignment")?;
-
-            //         let init = self
-            //             .parse_expression_within_expected(BindingPower::None)
-            //             .wrap_err("in variable assignment expression")?;
-
-            //         // Variable declaration with initialization expression
-            //         // TokenTree {
-            //         //     range: (offset, init.range.1),
-            //         //     inner: TokenTreeInner::Cons(Op::Var, vec![ident, second]),
-            //         // }
-            //         Expression {
-            //             inner: ExpressionInner::VariableDeclaration(VariableDeclaration {
-            //                 inner: VariableDeclarationInner {
-            //                     identifier,
-            //                     initializer: Some(Box::new(init)),
-            //                 },
-            //                 range: (offset, init.range.1),
-            //             }),
-            //             range: (offset, init.range.1),
-            //         }
-            //     } else {
-            //         // Variable declaration without initialization expression
-            //         TokenTree {
-            //             range: (offset, ident.range.1),
-            //             inner: TokenTreeInner::Cons(Op::Var, vec![ident]),
-            //         }
-            //     };
-
-            //     return Ok(result);
-            // }
             token => {
                 return Err(error::SyntaxError {
                     src: self.whole.to_string(),
@@ -1504,18 +1380,8 @@ impl<'de> Parser<'de> {
     ) -> Result<VariableDeclaration<'de>, Error> {
         let offset = start.offset;
 
-        let token = self
-            .lexer
-            .expect(TokenKind::Ident, "expected identifier")
-            .wrap_err("in variable assignment")?;
-
-        let ident_range = (token.offset, token.offset + token.origin.len());
-        let ident = Identifier {
-            inner: IdentifierInner {
-                name: Cow::Borrowed(token.origin),
-            },
-            range: ident_range,
-        };
+        let ident = self.parse_identifier().wrap_err("in variable assignment")?;
+        let ident_range = ident.range;
 
         // Prepare variable declaration result
         let variable_declaration = if matches!(
@@ -1557,6 +1423,166 @@ impl<'de> Parser<'de> {
         };
 
         Ok(variable_declaration)
+    }
+
+    fn parse_identifier(&mut self) -> Result<Identifier<'de>, Error> {
+        let ident = self.lexer.expect(TokenKind::Ident, "expected identifier")?;
+
+        let name = ident.origin;
+
+        let ident = Identifier {
+            range: (ident.offset, ident.offset + name.len()),
+            inner: IdentifierInner {
+                name: Cow::Borrowed(name),
+            },
+        };
+
+        Ok(ident)
+    }
+
+    // if it's function, start is the start of `fun` keyword
+    // if it's method, start is None
+    fn parse_function(&mut self, start: Option<usize>) -> Result<FunctionDeclaration<'de>, Error> {
+        let ident = self
+            .parse_identifier()
+            .wrap_err("in function name declaration")?;
+        let name = ident.name.as_ref();
+
+        let start = start.unwrap_or(ident.range.0);
+
+        let mut parameters = Vec::new();
+        let mut parameters_bindings: HashMap<&str, (usize, usize)> = HashMap::default();
+
+        self.lexer
+            .expect(TokenKind::LeftParen, "missing (")
+            .wrap_err_with(|| format!("in parameter list of function {name}"))?;
+
+        if matches!(
+            self.lexer.peek(),
+            Some(Ok(Token {
+                kind: TokenKind::RightParen,
+                ..
+            }))
+        ) {
+            // immediate parameter list end
+            self.lexer.next(); // consume the right paren
+        } else {
+            loop {
+                let parameter = self
+                    .lexer
+                    .expect(TokenKind::Ident, "unexpected token")
+                    .wrap_err_with(|| {
+                        format!("in parameter #{} of function {name}", parameters.len() + 1)
+                    })?;
+
+                if let Some(range) = parameters_bindings.get(parameter.origin) {
+                    return Err(error::RedeclarationError {
+                        src: self.whole().to_string(),
+                        name: parameter.origin.to_string(),
+                        err_span: (parameter.offset, parameter.origin.len()).into(),
+                        existing_span: (range.0..range.1).into(),
+                    }
+                    .into());
+                }
+
+                parameters.push(parameter);
+                parameters_bindings.insert(
+                    parameter.origin,
+                    (parameter.offset, parameter.offset + parameter.origin.len()),
+                );
+
+                let token = self
+                    .lexer
+                    .expect_where(
+                        |token| matches!(token.kind, TokenKind::RightParen | TokenKind::Comma),
+                        "continuing parameter list",
+                    )
+                    .wrap_err_with(|| format!("in parameter list of function {name}"))?;
+
+                if token.kind == TokenKind::RightParen {
+                    break;
+                }
+            }
+        }
+
+        self.state.function_context.depth += 1;
+
+        let block = self
+            .parse_block(None, Some(&parameters))
+            .wrap_err_with(|| format!("in body of function {name}"))?;
+
+        if self.state.function_context.depth == 0 {
+            // If we are at the top level, we should not allow function declarations
+            return Err(error::ParseInternalError {
+                message: "Function depths should not be 0 at this point".to_string(),
+            }
+            .into());
+        }
+
+        self.state.function_context.depth -= 1;
+
+        let range = (start, block.range.1);
+
+        Ok(FunctionDeclaration {
+            range,
+            inner: FunctionDeclarationInner {
+                name: ident,
+                parameters: parameters
+                    .into_iter()
+                    .map(|param| Identifier {
+                        range: (param.offset, param.offset + param.origin.len()),
+                        inner: IdentifierInner {
+                            name: Cow::Borrowed(param.origin),
+                        },
+                    })
+                    .collect(),
+                body: Box::new(block),
+            },
+        })
+    }
+
+    fn parse_class_body(&mut self) -> Result<ClassBody<'de>, Error> {
+        let left_brace = self
+            .lexer
+            .expect(TokenKind::LeftBrace, "expected left brace")?;
+
+        let start = left_brace.offset;
+
+        let mut body_items = vec![];
+
+        // only support methods now
+        loop {
+            let peek = self.lexer.peek();
+
+            let is_right_brace = matches!(
+                peek,
+                Some(Ok(Token {
+                    kind: TokenKind::RightBrace,
+                    ..
+                }))
+            );
+
+            if is_right_brace {
+                let right_brace = self
+                    .lexer
+                    .next()
+                    .expect("checked above")
+                    .expect("checked above"); // consume the right brace
+                let end = right_brace.offset; // +1 for the right brace
+                let body = ClassBody {
+                    range: (start, end),
+                    inner: ClassBodyInner(body_items),
+                };
+
+                return Ok(body);
+            }
+
+            let func = self.parse_function(None)?;
+            body_items.push(ClassBodyItem {
+                range: func.range,
+                inner: ClassBodyItemInner::ClassMethod(func),
+            });
+        }
     }
 }
 
@@ -1750,6 +1776,36 @@ mod tests {
             let res = parser.parse();
             println!("{res:?}");
             assert!(res.is_err())
+        }
+    }
+
+    #[test]
+    fn parse_class() {
+        {
+            let code = r#"
+                class Spaceship {}
+                print Spaceship;
+            "#;
+
+            let mut parser = Parser::new(code);
+            let tts = parser.parse().unwrap();
+            let tt = tts.get(0).unwrap();
+            assert_eq!(tt.to_string(), "(class Spaceship)");
+        }
+
+        {
+            let code = r#"
+                class Robot {
+                  beep() {
+                    print "Beep boop!";
+                  }
+                }
+            "#;
+
+            let mut parser = Parser::new(code);
+            let tts = parser.parse().unwrap();
+            let tt = tts.get(0).unwrap();
+            assert_eq!(tt.to_string(), "(class Robot method beep)");
         }
     }
 }

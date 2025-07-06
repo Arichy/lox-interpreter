@@ -253,8 +253,8 @@ impl fmt::Display for FunctionDeclaration<'_> {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClassDeclarationInner<'de> {
     pub id: Identifier<'de>,
-    pub superclass: Option<Token<'de>>,
-    pub body: Vec<ClassBody>,
+    pub superclass: Option<Identifier<'de>>,
+    pub body: ClassBody<'de>,
 }
 pub type ClassDeclaration<'de> = Spanned<ClassDeclarationInner<'de>>;
 impl fmt::Display for ClassDeclaration<'_> {
@@ -263,7 +263,7 @@ impl fmt::Display for ClassDeclaration<'_> {
         if let Some(superclass) = &self.inner.superclass {
             write!(f, " < {}", superclass)?;
         }
-        for method in &self.inner.body {
+        for method in &self.inner.body.0 {
             write!(f, " {}", method)?;
         }
         write!(f, ")")
@@ -271,17 +271,21 @@ impl fmt::Display for ClassDeclaration<'_> {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum ClassBodyInner {
+pub struct ClassBodyInner<'de>(pub Vec<ClassBodyItem<'de>>);
+pub type ClassBody<'de> = Spanned<ClassBodyInner<'de>>;
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ClassBodyItemInner<'de> {
     // @todo: Add more class body elements as needed
-    ClassMethod(),
+    ClassMethod(FunctionDeclaration<'de>),
     ClassProperty(),
 }
-pub type ClassBody = Spanned<ClassBodyInner>;
-impl fmt::Display for ClassBody {
+pub type ClassBodyItem<'de> = Spanned<ClassBodyItemInner<'de>>;
+impl fmt::Display for ClassBodyItem<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.inner {
-            ClassBodyInner::ClassMethod() => write!(f, "class method"),
-            ClassBodyInner::ClassProperty() => write!(f, "class property"),
+            ClassBodyItemInner::ClassMethod(method) => write!(f, "method {}", method.name),
+            ClassBodyItemInner::ClassProperty() => write!(f, "class property"),
         }
     }
 }
@@ -310,16 +314,7 @@ impl fmt::Display for Declaration<'_> {
                 }
                 write!(f, " {})", fun_decl.inner.body)
             }
-            DeclarationInner::Class(class_decl) => {
-                write!(f, "(class {}", class_decl.inner.id)?;
-                if let Some(superclass) = &class_decl.inner.superclass {
-                    write!(f, " < {}", superclass)?;
-                }
-                for method in &class_decl.inner.body {
-                    write!(f, " {}", method)?;
-                }
-                write!(f, ")")
-            }
+            DeclarationInner::Class(class_decl) => write!(f, "{}", class_decl),
         }
     }
 }
@@ -618,6 +613,7 @@ impl fmt::Display for Statement<'_> {
 pub enum TokenTreeInner<'de> {
     Statement(Statement<'de>),
     Expression(Expression<'de>),
+    ClassBody(ClassBodyItem<'de>),
 }
 pub type TokenTree<'de> = Spanned<TokenTreeInner<'de>>;
 impl fmt::Display for TokenTreeInner<'_> {
@@ -625,6 +621,7 @@ impl fmt::Display for TokenTreeInner<'_> {
         match self {
             TokenTreeInner::Expression(expr) => write!(f, "{}", expr),
             TokenTreeInner::Statement(statement) => write!(f, "{}", statement),
+            TokenTreeInner::ClassBody(class_body) => write!(f, "{}", class_body),
         }
     }
 }
