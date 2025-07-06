@@ -1,0 +1,209 @@
+use super::*;
+
+#[test]
+fn test_self_initialization() {
+    {
+        let code = r#"
+                var a = "value";
+                var a = a;      // This is allowed in global scope
+                print a;        // Should print "value"
+            "#;
+
+        let mut parser = Parser::new(code);
+
+        let res = parser.parse();
+
+        assert!(res.is_ok());
+    }
+
+    {
+        let code = r#"
+                var a = "outer";
+                {
+                    var a = a;  // Error: Can't read local variable in its own initializer
+                }
+            "#;
+
+        let mut parser = Parser::new(code);
+
+        let res = parser.parse();
+
+        assert!(res.is_err());
+    }
+
+    {
+        let code = r#"
+                fun returnArg(arg) {
+                    return arg;
+                }
+
+                var b = "global";
+                {
+                    var a = "first";
+                    var b = returnArg(b);    // Error: Can't read local variable in its own initializer
+                    print b;
+                }
+
+                var b = b + " updated";
+                print b;
+            "#;
+
+        let mut parser = Parser::new(code);
+        let res = parser.parse();
+        assert!(res.is_err());
+    }
+}
+
+#[test]
+fn variable_redeclaration() {
+    {
+        let code = r#"
+                {
+                  var a = "value";
+                  var a = "other";
+                }
+            "#;
+
+        let mut parser = Parser::new(code);
+        let res = parser.parse();
+        assert!(res.is_err());
+    }
+
+    {
+        let code = r#"
+                fun foo(a) {
+                  var a;
+                }
+            "#;
+
+        let mut parser = Parser::new(code);
+        let res = parser.parse();
+        assert!(res.is_err())
+    }
+
+    {
+        let code = r#"
+                fun foo(arg, arg) {
+                  "body";
+                }
+            "#;
+
+        let mut parser = Parser::new(code);
+        let res = parser.parse();
+        assert!(res.is_err())
+    }
+
+    {
+        let code = r#"
+                var a = "1";
+                print a;
+
+                var a;
+                print a;
+
+                var a = "2";
+                print a;
+
+                {
+                  var a = "1";
+                  var a = "2";
+                  print a;
+                }
+            "#;
+
+        let mut parser = Parser::new(code);
+        let res = parser.parse();
+        assert!(res.is_err())
+    }
+}
+
+#[test]
+fn invalid_return() {
+    {
+        let code = r#"
+               fun foo() {
+                    return "at function scope is ok";
+                }
+
+                return;
+            "#;
+
+        let mut parser = Parser::new(code);
+        let res = parser.parse();
+        println!("{res:?}");
+        assert!(res.is_err())
+    }
+
+    {
+        let code = r#"
+                fun foo() {
+                    if (true) {
+                        return "early return";
+                    }
+
+                    for (var i = 0; i < 10; i = i + 1) {
+                        return "loop return";
+                    }
+                }
+
+                if (true) {
+                    return "conditional return";
+                }
+            "#;
+
+        let mut parser = Parser::new(code);
+        let res = parser.parse();
+        println!("{res:?}");
+        assert!(res.is_err())
+    }
+
+    {
+        let code = r#"
+                {
+                    return "not allowed in a block either";
+                }
+
+                fun allowed() {
+                    if (true) {
+                        return "this is fine";
+                    }
+                    return;
+                }
+            "#;
+
+        let mut parser = Parser::new(code);
+        let res = parser.parse();
+        println!("{res:?}");
+        assert!(res.is_err())
+    }
+}
+
+#[test]
+fn parse_class() {
+    {
+        let code = r#"
+                class Spaceship {}
+                print Spaceship;
+            "#;
+
+        let mut parser = Parser::new(code);
+        let tts = parser.parse().unwrap();
+        let tt = tts.get(0).unwrap();
+        assert_eq!(tt.to_string(), "(class Spaceship)");
+    }
+
+    {
+        let code = r#"
+                class Robot {
+                  beep() {
+                    print "Beep boop!";
+                  }
+                }
+            "#;
+
+        let mut parser = Parser::new(code);
+        let tts = parser.parse().unwrap();
+        let tt = tts.get(0).unwrap();
+        assert_eq!(tt.to_string(), "(class Robot method beep)");
+    }
+}
