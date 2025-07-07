@@ -10,8 +10,9 @@ use crate::{
         Declaration, DeclarationInner, Expression, ExpressionInner, ForInit, ForInitInner,
         ForStatement, ForStatementInner, FunctionDeclaration, FunctionDeclarationInner,
         GroupExpression, GroupExpressionInner, Identifier, IdentifierInner, IfStatement,
-        IfStatementInner, Literal, LiteralInner, NilLiteral, NilLiteralInner, NumberLiteral,
-        NumberLiteralInner, Op, Statement, StatementInner, StringLiteral, StringLiteralInner,
+        IfStatementInner, Literal, LiteralInner, MemberExpression, MemberExpressionInner,
+        NilLiteral, NilLiteralInner, NumberLiteral, NumberLiteralInner, Op, Statement,
+        StatementInner, StringLiteral, StringLiteralInner, ThisExpression, ThisExpressionInner,
         TokenTree, TokenTreeInner, UnaryExpression, UnaryExpressionInner, VariableDeclaration,
         VariableDeclarationInner, Visitor, WhileStatement, WhileStatementInner,
     },
@@ -58,8 +59,8 @@ pub enum BindingPower {
 
     Call = 14, // Function calls
 
-    MemberAccess = 16, // Member/field access (.)
-    MemberAccessRight = 17,
+    MemberAccess = 15, // Member/field access (.)
+    MemberAccessRight = 16,
 }
 
 impl BindingPower {
@@ -207,9 +208,6 @@ fn infix_binding_power(op: Op) -> Option<(BindingPower, BindingPower)> {
 
         // Multiplicative operators
         Op::Star | Op::Slash => (BindingPower::Factor, BindingPower::FactorRight),
-
-        // Member access (highest precedence)
-        Op::Field => (BindingPower::MemberAccessRight, BindingPower::MemberAccess),
 
         Op::Equal => {
             // Assignment operator
@@ -1056,15 +1054,17 @@ impl<'de> Parser<'de> {
             //     inner: TokenTreeInner::Atom(Atom::Super),
             //     range: (offset, offset + origin.len()),
             // },
-
-            // Token {
-            //     kind: TokenKind::This,
-            //     offset,
-            //     origin,
-            // } => TokenTree {
-            //     inner: TokenTreeInner::Atom(Atom::This),
-            //     range: (offset, offset + origin.len()),
-            // },
+            Token {
+                kind: TokenKind::This,
+                offset,
+                origin,
+            } => Expression {
+                inner: ExpressionInner::This(ThisExpression {
+                    range: (offset, offset + origin.len()),
+                    inner: ThisExpressionInner,
+                }),
+                range: (offset, offset + origin.len()),
+            },
 
             // group
             Token {
@@ -1168,7 +1168,33 @@ impl<'de> Parser<'de> {
                     kind: TokenKind::Dot,
                     offset,
                     ..
-                }) => (Op::Field, offset),
+                }) => {
+                    // Handle dot operator specially - member access
+                    if BindingPower::MemberAccess < min_bp {
+                        break;
+                    }
+                    self.lexer.next();
+
+                    let rhs = self
+                        .parse_expression_within_expected(BindingPower::MemberAccessRight)
+                        .wrap_err_with(|| format!("on the right-hand side of {lhs}."))?;
+
+                    let range = (lhs.range.0, rhs.range.1);
+
+                    lhs = Expression {
+                        range,
+                        inner: ExpressionInner::Member(MemberExpression {
+                            inner: MemberExpressionInner {
+                                computed: false,
+                                object: Box::new(lhs),
+                                property: Box::new(rhs),
+                            },
+                            range,
+                        }),
+                    };
+
+                    continue;
+                }
                 Some(Token {
                     kind: TokenKind::Minus,
                     offset,

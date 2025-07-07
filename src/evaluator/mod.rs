@@ -70,15 +70,30 @@ pub enum ValueInner<'de> {
     Function(Function<'de>),
     Object(RefCell<Object<'de>>),
     NativeFunction(NativeFunction<'de>),
+    Class(Class<'de>),
 }
 
+#[cfg(feature = "js_this")]
 #[derive(Debug)]
 pub struct Function<'de> {
-    pub name: String,
+    // If a function in lox is not a method, then it is the same as function in js and would capture this in env it gets defined
+    pub name: Cow<'de, str>,
     pub parameters: Vec<Identifier<'de>>,
     pub body: BlockStatement<'de>,
     pub closure_env: Option<Environment<'de>>,
     pub closure_binding_env: ClosureBindingEnv<'de>,
+    pub captured_this: Option<Value<'de>>,
+}
+
+#[cfg(not(feature = "js_this"))]
+#[derive(Debug)]
+pub struct Function<'de> {
+    pub name: Cow<'de, str>,
+    pub parameters: Vec<Identifier<'de>>,
+    pub body: BlockStatement<'de>,
+    pub closure_env: Option<Environment<'de>>,
+    pub closure_binding_env: ClosureBindingEnv<'de>,
+    pub this: Option<Value<'de>>,
 }
 
 impl Function<'_> {
@@ -90,7 +105,22 @@ impl Function<'_> {
 
 #[derive(Debug)]
 pub struct Object<'de> {
+    pub class: Option<Value<'de>>,
     pub properties: HashMap<String, Value<'de>>,
+}
+
+#[derive(Debug)]
+pub struct Class<'de> {
+    pub name: Cow<'de, str>,
+    pub init: Option<Value<'de>>,
+    pub methods: HashMap<
+        Cow<'de, str>,
+        (
+            FunctionDeclaration<'de>,
+            Option<Environment<'de>>,
+            ClosureBindingEnv<'de>,
+        ),
+    >,
 }
 
 impl<'de> ValueInner<'de> {
@@ -128,27 +158,50 @@ impl<'de> Value<'de> {
         }
     }
 
+    #[cfg(not(feature = "js_this"))]
     pub fn new_function(
-        name: String,
-        parameters: Vec<Identifier<'de>>,
-        body: BlockStatement<'de>,
+        func_decl: &FunctionDeclaration<'de>,
         closure_env: Option<Environment<'de>>,
         closure_binding_env: ClosureBindingEnv<'de>,
+        this: Option<Value<'de>>,
     ) -> Self {
         Self {
             inner: Rc::new(ValueInner::Function(Function {
-                name,
-                parameters,
-                body,
+                name: func_decl.name.name.clone(),
+                parameters: func_decl.parameters.clone(),
+                body: *func_decl.body.clone(),
                 closure_env,
                 closure_binding_env,
+                this,
             })),
         }
     }
 
-    pub fn new_object(properties: HashMap<String, Value<'de>>) -> Self {
+    #[cfg(feature = "js_this")]
+    pub fn new_function(
+        func_decl: &FunctionDeclaration<'de>,
+        closure_env: Option<Environment<'de>>,
+        closure_binding_env: ClosureBindingEnv<'de>,
+        captured_this: Option<Value<'de>>,
+    ) -> Self {
         Self {
-            inner: Rc::new(ValueInner::Object(RefCell::new(Object { properties }))),
+            inner: Rc::new(ValueInner::Function(Function {
+                name: func_decl.name.name.clone(),
+                parameters: func_decl.parameters.clone(),
+                body: *func_decl.body.clone(),
+                closure_env,
+                closure_binding_env,
+                captured_this,
+            })),
+        }
+    }
+
+    pub fn new_object(class: Option<Value<'de>>, properties: HashMap<String, Value<'de>>) -> Self {
+        Self {
+            inner: Rc::new(ValueInner::Object(RefCell::new(Object {
+                class,
+                properties,
+            }))),
         }
     }
 
@@ -158,6 +211,27 @@ impl<'de> Value<'de> {
     ) -> Self {
         Self {
             inner: Rc::new(ValueInner::NativeFunction(NativeFunction { name, fn_ptr })),
+        }
+    }
+
+    pub fn new_class(
+        name: Cow<'de, str>,
+        init: Option<Value<'de>>,
+        methods: HashMap<
+            Cow<'de, str>,
+            (
+                FunctionDeclaration<'de>,
+                Option<Environment<'de>>,
+                ClosureBindingEnv<'de>,
+            ),
+        >,
+    ) -> Self {
+        Self {
+            inner: Rc::new(ValueInner::Class(Class {
+                name,
+                init,
+                methods,
+            })),
         }
     }
 }
@@ -176,17 +250,28 @@ impl fmt::Display for Value<'_> {
                     func.name, func.parameters
                 )
             }
-            ValueInner::Object(object) => {
-                let properties: Vec<String> = object
-                    .borrow()
-                    .properties
-                    .iter()
-                    .map(|(key, value)| format!("{}: {}", key, value))
-                    .collect();
-                write!(f, "Object({})", properties.join(", "))
-            }
+            ValueInner::Object(object) => match &object.borrow().class {
+                Some(class) => {
+                    let ValueInner::Class(class) = &**class else {
+                        panic!("class of the object is not a class")
+                    };
+                    write!(f, "{} instance", class.name)
+                }
+                None => {
+                    let properties: Vec<String> = object
+                        .borrow()
+                        .properties
+                        .iter()
+                        .map(|(key, value)| format!("{}: {}", key, value))
+                        .collect();
+                    write!(f, "Object({})", properties.join(", "))
+                }
+            },
             ValueInner::NativeFunction(native_func) => {
                 write!(f, "{}", native_func)
+            }
+            ValueInner::Class(class) => {
+                write!(f, "{}", class.name)
             }
         }
     }
@@ -391,107 +476,107 @@ impl<'de> Evaluator<'de> {
                     }
 
                     Op::Equal => {
-                        if let ExpressionInner::Identifier(ident) = &binary_expr.left.inner {
-                            let value = self.evaluate_expression(&binary_expr.right, vm)?;
+                        match &binary_expr.left.inner {
+                            ExpressionInner::Identifier(ident) => {
+                                let value = self.evaluate_expression(&binary_expr.right, vm)?;
 
-                            // if let Some(variable) = vm.get_variable(&ident.name) {
-                            //     *variable = value.clone();
-                            // } else {
-                            //     return Err(error::RuntimeError::ReferenceError {
-                            //         src: self.whole.to_string(),
-                            //         ident: ident.name.to_string(),
-                            //         err_span: ident.range.into(),
-                            //     }
-                            //     .into());
-                            // }
+                                // if let Some(variable) = vm.get_variable(&ident.name) {
+                                //     *variable = value.clone();
+                                // } else {
+                                //     return Err(error::RuntimeError::ReferenceError {
+                                //         src: self.whole.to_string(),
+                                //         ident: ident.name.to_string(),
+                                //         err_span: ident.range.into(),
+                                //     }
+                                //     .into());
+                                // }
 
-                            if !vm.assign_variable(&ident.name, value.clone()) {
-                                return Err(error::RuntimeError::ReferenceError {
-                                    src: self.whole.to_string(),
-                                    ident: ident.name.to_string(),
-                                    err_span: ident.range.into(),
+                                if !vm.assign_variable(&ident.name, value.clone()) {
+                                    return Err(error::RuntimeError::ReferenceError {
+                                        src: self.whole.to_string(),
+                                        ident: ident.name.to_string(),
+                                        err_span: ident.range.into(),
+                                    }
+                                    .into());
                                 }
-                                .into());
+
+                                Ok(value)
                             }
 
-                            Ok(value)
-                        } else {
-                            return Err(error::RuntimeError::BadOperandError {
-                                src: self.whole.to_string(),
-                                operator: binary_expr.operator.to_string(),
-                                reason: "Left operand must be an identifier".to_string(),
-                                err_span: expr.range.into(),
-                            }
-                            .into());
-                        }
-                    }
-
-                    Op::Field => {
-                        let object_value = self.evaluate_expression(&binary_expr.left, vm)?;
-
-                        match &*object_value {
-                            ValueInner::Object(object) => {
-                                let object = object.borrow();
-                                // let property = self
-                                //     .evaluate_expression(&binary_expr.right, state)?
-                                //     .to_string();
-
-                                let property_name = match &binary_expr.right.inner {
-                                    ExpressionInner::Identifier(ident) => {
-                                        // If the property is an identifier, we can use its name directly
-                                        if ident.name.is_empty() {
-                                            return Err(error::RuntimeError::BadOperandError {
-                                                src: self.whole.to_string(),
-                                                operator: "member access".to_string(),
-                                                reason: "Property name cannot be empty".to_string(),
-                                                err_span: expr.range.into(),
-                                            }
-                                            .into());
-                                        }
-                                        ident.name.to_string()
-                                    }
-
-                                    expr => {
-                                        let expr = match expr {
-                                            ExpressionInner::Assignment(a) => a.to_string(),
-                                            ExpressionInner::Binary(b) => b.to_string(),
-                                            ExpressionInner::Call(c) => c.to_string(),
-                                            ExpressionInner::Literal(l) => l.to_string(),
-                                            ExpressionInner::Unary(u) => u.to_string(),
-                                            ExpressionInner::Group(g) => g.to_string(),
-                                            ExpressionInner::Member(m) => m.to_string(),
-                                            ExpressionInner::Identifier(i) => i.to_string(),
-                                        };
-
-                                        return Err(error::RuntimeError::BadOperandError {
-                                            src: self.whole.to_string(),
-                                            operator: "member access".to_string(),
-                                            reason: format!("{} is not a valid property", expr),
-                                            err_span: binary_expr.right.range.into(),
-                                        }
-                                        .into());
-                                    }
+                            ExpressionInner::Member(member) => {
+                                let value = self.evaluate_expression(&binary_expr.right, vm)?;
+                                let object = self.evaluate_expression(&member.object, vm)?;
+                                let property = if member.computed {
+                                    self.evaluate_expression(&member.property, vm)?.to_string()
+                                } else {
+                                    member.property.to_string()
                                 };
 
-                                if let Some(property_value) = object.properties.get(&property_name)
-                                {
-                                    Ok(property_value.clone())
-                                } else {
-                                    Ok(Value::new_nil())
-                                }
+                                let ValueInner::Object(object) = &*object else {
+                                    return Err(error::RuntimeError::TypeError {
+                                        src: self.whole.to_string(),
+                                        ident: object.to_string(),
+                                        expected_type: "object".to_string(),
+                                        err_span: (member.object.range.0..member.object.range.1)
+                                            .into(),
+                                    }
+                                    .into());
+                                };
+
+                                object
+                                    .borrow_mut()
+                                    .properties
+                                    .insert(property.to_string(), value.clone());
+
+                                Ok(value)
                             }
 
                             _ => {
                                 return Err(error::RuntimeError::BadOperandError {
                                     src: self.whole.to_string(),
-                                    operator: "member access".to_string(),
-                                    reason: format!("{} is not an object", object_value),
+                                    operator: binary_expr.operator.to_string(),
+                                    reason: "Left operand must be an identifier".to_string(),
                                     err_span: expr.range.into(),
                                 }
                                 .into());
                             }
                         }
+
+                        // if let ExpressionInner::Identifier(ident) = &binary_expr.left.inner {
+                        //     let value = self.evaluate_expression(&binary_expr.right, vm)?;
+
+                        //     // if let Some(variable) = vm.get_variable(&ident.name) {
+                        //     //     *variable = value.clone();
+                        //     // } else {
+                        //     //     return Err(error::RuntimeError::ReferenceError {
+                        //     //         src: self.whole.to_string(),
+                        //     //         ident: ident.name.to_string(),
+                        //     //         err_span: ident.range.into(),
+                        //     //     }
+                        //     //     .into());
+                        //     // }
+
+                        //     if !vm.assign_variable(&ident.name, value.clone()) {
+                        //         return Err(error::RuntimeError::ReferenceError {
+                        //             src: self.whole.to_string(),
+                        //             ident: ident.name.to_string(),
+                        //             err_span: ident.range.into(),
+                        //         }
+                        //         .into());
+                        //     }
+
+                        //     Ok(value)
+                        // } else {
+                        //     return Err(error::RuntimeError::BadOperandError {
+                        //         src: self.whole.to_string(),
+                        //         operator: binary_expr.operator.to_string(),
+                        //         reason: "Left operand must be an identifier".to_string(),
+                        //         err_span: expr.range.into(),
+                        //     }
+                        //     .into());
+                        // }
                     }
+
                     _ => {
                         todo!()
                     }
@@ -539,6 +624,15 @@ impl<'de> Evaluator<'de> {
             }
 
             ExpressionInner::Call(call_expr) => {
+                // in js, `this` is evaluated dynamically and bound to the callee object
+                #[cfg(feature = "js_this")]
+                let this = if let ExpressionInner::Member(member) = &**call_expr.callee {
+                    let instance = self.evaluate_expression(&member.object, vm)?;
+                    Some(instance)
+                } else {
+                    None
+                };
+
                 let mut callee_value = self.evaluate_expression(&call_expr.callee, vm)?;
                 // arguments evaluation must happen before closure environment is set
                 let mut arguments = Vec::new();
@@ -577,34 +671,40 @@ impl<'de> Evaluator<'de> {
                             }
                         }
 
-                        vm.enter_function(
-                            func.closure_env.clone(),
-                            func.closure_binding_env.clone(),
-                        );
+                        // vm.enter_function(
+                        //     func.closure_env.clone(),
+                        //     func.closure_binding_env.clone(),
+                        // );
 
-                        // let mut arguments = Vec::new();
-                        for (param, arg_value) in func.parameters.iter().zip(arguments) {
-                            vm.define_variable(param.to_string(), arg_value);
-                        }
+                        // // let mut arguments = Vec::new();
+                        // for (param, arg_value) in func.parameters.iter().zip(arguments) {
+                        //     vm.define_variable(param.to_string(), arg_value);
+                        // }
 
-                        for stmt in &func.body.statements {
-                            self.run_statement(stmt, vm)?;
-                        }
+                        // for stmt in &func.body.statements {
+                        //     self.run_statement(stmt, vm)?;
+                        // }
 
-                        let return_value = match vm.current_stack_frame() {
-                            Ok(frame) => frame
-                                .return_value
-                                .clone()
-                                .unwrap_or_else(|| Value::new_nil()),
-                            Err(e) => {
-                                return Err(error::RuntimeError::InternalError {
-                                    message: e.to_string(),
-                                }
-                                .into());
-                            }
-                        };
+                        // let return_value = match vm.current_stack_frame() {
+                        //     Ok(frame) => frame
+                        //         .return_value
+                        //         .clone()
+                        //         .unwrap_or_else(|| Value::new_nil()),
+                        //     Err(e) => {
+                        //         return Err(error::RuntimeError::InternalError {
+                        //             message: e.to_string(),
+                        //         }
+                        //         .into());
+                        //     }
+                        // };
 
-                        vm.leave_function()?;
+                        // vm.leave_function()?;
+
+                        // in lox, `this` is stored in function statically
+                        #[cfg(not(feature = "js_this"))]
+                        let this = func.this.clone();
+
+                        let return_value = self.call_func(func, vm, arguments, this)?;
 
                         // set cache
                         if is_pure_function {
@@ -626,6 +726,78 @@ impl<'de> Evaluator<'de> {
                         let ret = (native_func.fn_ptr)(&arguments);
                         return ret;
                     }
+
+                    // call class
+                    ValueInner::Class(class) => {
+                        let mut methods = HashMap::default();
+
+                        // create methods dynamically when calling class
+
+                        let mut instance = Value::new_object(Some(callee_value.clone()), methods);
+
+                        let ValueInner::Object(object) = &*instance else {
+                            unreachable!()
+                        };
+
+                        for (name, (decl, closure_env, closure_binding_env)) in &class.methods {
+                            // methods.insert(name.to_string(), method.clone());
+                            object.borrow_mut().properties.insert(
+                                name.to_string(),
+                                #[cfg(not(feature = "js_this"))]
+                                {
+                                    Value::new_function(
+                                        decl,
+                                        closure_env.clone(),
+                                        closure_binding_env.clone(),
+                                        Some(instance.clone()),
+                                    )
+                                },
+                                #[cfg(feature = "js_this")]
+                                {
+                                    Value::new_function(
+                                        decl,
+                                        closure_env.clone(),
+                                        closure_binding_env.clone(),
+                                        None,
+                                    )
+                                },
+                            );
+                        }
+
+                        match &class.init {
+                            Some(init) => {
+                                let ValueInner::Function(init) = &**init else {
+                                    return Err(error::RuntimeError::InternalError {
+                                        message: "class init must be a function".to_string(),
+                                    }
+                                    .into());
+                                };
+
+                                if init.parameters.len() != call_expr.arguments.len() {
+                                    return Err(error::RuntimeError::BadOperandError {
+                                        src: self.whole.to_string(),
+                                        operator: "call".to_string(),
+                                        reason: format!(
+                                            "Expected {} arguments, but got {}",
+                                            init.parameters.len(),
+                                            call_expr.arguments.len()
+                                        ),
+                                        err_span: expr.range.into(),
+                                    }
+                                    .into());
+                                }
+
+                                // discard the return value of `init` constructor
+                                let _ =
+                                    self.call_func(init, vm, arguments, Some(instance.clone()))?;
+                            }
+
+                            None => {}
+                        }
+
+                        Ok(instance)
+                    }
+
                     _ => {
                         return Err(error::RuntimeError::BadOperandError {
                             src: self.whole.to_string(),
@@ -644,12 +816,43 @@ impl<'de> Evaluator<'de> {
                 match &*object_value {
                     ValueInner::Object(object) => {
                         let object = object.borrow();
-                        let property = self.evaluate_expression(&member.object, vm)?.to_string();
+                        let property_name = if member.computed {
+                            todo!()
+                        } else {
+                            match &member.property.inner {
+                                ExpressionInner::Identifier(ident) => {
+                                    if ident.name.is_empty() {
+                                        return Err(error::RuntimeError::BadOperandError {
+                                            src: self.whole.to_string(),
+                                            operator: "member access".to_string(),
+                                            reason: "Property name cannot be empty".to_string(),
+                                            err_span: expr.range.into(),
+                                        }
+                                        .into());
+                                    }
+                                    ident.name.to_string()
+                                }
+                                _ => {
+                                    return Err(error::RuntimeError::BadOperandError {
+                                        src: self.whole.to_string(),
+                                        operator: "member access".to_string(),
+                                        reason: "Property must be an identifier".to_string(),
+                                        err_span: member.property.range.into(),
+                                    }
+                                    .into());
+                                }
+                            }
+                        };
 
-                        if let Some(property_value) = object.properties.get(&property) {
+                        if let Some(property_value) = object.properties.get(&property_name) {
                             Ok(property_value.clone())
                         } else {
-                            Ok(Value::new_nil())
+                            Err(error::RuntimeError::UndefinedProperty {
+                                src: self.whole.to_string(),
+                                property: property_name.to_string(),
+                                err_span: (member.property.range.0..member.property.range.1).into(),
+                            }
+                            .into())
                         }
                     }
 
@@ -662,6 +865,38 @@ impl<'de> Evaluator<'de> {
                         }
                         .into());
                     }
+                }
+            }
+
+            ExpressionInner::This(this_expr) => {
+                #[cfg(feature = "js_this")]
+                {
+                    let current_stack_frame = vm.current_stack_frame()?;
+
+                    current_stack_frame
+                        .captured_this_value
+                        .clone()
+                        .or(current_stack_frame.this_value.clone())
+                        .ok_or_else(|| {
+                            error::RuntimeError::InvalidThis {
+                                src: self.whole.to_string(),
+                                err_span: (this_expr.range.0, this_expr.range.1).into(),
+                            }
+                            .into()
+                        })
+                }
+
+                #[cfg(not(feature = "js_this"))]
+                {
+                    let this = vm.current_env.get("this").ok_or_else(|| {
+                        error::RuntimeError::InvalidThis {
+                            src: self.whole.to_string(),
+                            err_span: (this_expr.range.0, this_expr.range.1).into(),
+                        }
+                        .into()
+                    });
+
+                    this
                 }
             }
 
@@ -738,12 +973,25 @@ impl<'de> Evaluator<'de> {
                     let closure_binding_env =
                         self.collect_closure_binding_env(func_declaration, vm);
 
+                    #[cfg(feature = "js_this")]
+                    let function_value = {
+                        // capture this because we treat all functions like arrow function
+                        let captured_this = vm.current_stack_frame()?.this_value.clone();
+
+                        Value::new_function(
+                            func_declaration,
+                            Some(vm.current_env.clone()),
+                            closure_binding_env,
+                            captured_this,
+                        )
+                    };
+
+                    #[cfg(not(feature = "js_this"))]
                     let function_value = Value::new_function(
-                        function_name.clone(),
-                        func_declaration.parameters.clone(),
-                        *func_declaration.body.clone(),
+                        func_declaration,
                         Some(vm.current_env.clone()),
                         closure_binding_env,
+                        None,
                     );
 
                     if let Ok(current_stack_frame) = vm.current_stack_frame_mut() {
@@ -757,7 +1005,89 @@ impl<'de> Evaluator<'de> {
                     vm.define_variable(function_name, function_value);
                 }
 
-                DeclarationInner::Class(class_decl) => {}
+                DeclarationInner::Class(class_decl) => {
+                    let name = class_decl.id.name.clone();
+
+                    let mut init = None;
+                    let mut methods: HashMap<
+                        Cow<'_, str>,
+                        (
+                            FunctionDeclaration<'de>,
+                            Option<Environment<'de>>,
+                            ClosureBindingEnv<'de>,
+                        ),
+                    > = HashMap::default();
+
+                    for item in &class_decl.body.0 {
+                        match &item.inner {
+                            ClassBodyItemInner::ClassMethod(method) => {
+                                let closure_binding_env =
+                                    self.collect_closure_binding_env(method, vm);
+
+                                if method.inner.name.name == "init" {
+                                    #[cfg(feature = "js_this")]
+                                    {
+                                        init = Some(Value::new_function(
+                                            method,
+                                            None,
+                                            closure_binding_env,
+                                            None,
+                                        ));
+                                    }
+
+                                    #[cfg(not(feature = "js_this"))]
+                                    {
+                                        init = Some(Value::new_function(
+                                            method,
+                                            None,
+                                            closure_binding_env,
+                                            None,
+                                        ));
+                                    }
+                                } else {
+                                    #[cfg(feature = "js_this")]
+                                    {
+                                        // methods.push(Value::new_function(method, None, Default::default()))
+                                        methods.insert(
+                                            method.inner.name.name.clone(),
+                                            (
+                                                method.clone(),
+                                                Some(vm.current_env.clone()),
+                                                closure_binding_env,
+                                            ),
+                                        );
+                                    }
+
+                                    #[cfg(not(feature = "js_this"))]
+                                    {
+                                        // methods.push(Value::new_function(method, None, Default::default()))
+                                        methods.insert(
+                                            method.inner.name.name.clone(),
+                                            (
+                                                method.clone(),
+                                                Some(vm.current_env.clone()),
+                                                closure_binding_env,
+                                            ),
+                                        );
+                                    }
+                                }
+                            }
+
+                            _ => {}
+                        }
+                    }
+
+                    let class_value = Value::new_class(name.clone(), init, methods);
+
+                    let name = name.to_string();
+
+                    if let Ok(current_stack_frame) = vm.current_stack_frame_mut() {
+                        // If the variable was a closure binding, we remove it because it's being redefined
+                        current_stack_frame.closure_binding_env.remove(&name);
+                    }
+                    // Register the function in the current scope
+                    vm.define_variable(name, class_value);
+                }
             },
 
             StatementInner::Expression(expr) => {
@@ -922,6 +1252,54 @@ impl<'de> Evaluator<'de> {
         Ok(())
     }
 
+    fn call_func(
+        &mut self,
+        func: &Function<'de>,
+        vm: &mut Vm<'de>,
+        arguments: Vec<Value<'de>>,
+        this: Option<Value<'de>>,
+    ) -> Result<Value<'de>, Error> {
+        vm.enter_function(func.closure_env.clone(), func.closure_binding_env.clone());
+
+        #[cfg(feature = "js_this")]
+        {
+            let current_stack_frame = vm.current_stack_frame_mut()?;
+            current_stack_frame.this_value = this;
+            current_stack_frame.captured_this_value = func.captured_this.clone();
+        }
+
+        // let mut arguments = Vec::new();
+        for (param, arg_value) in func.parameters.iter().zip(arguments) {
+            vm.define_variable(param.to_string(), arg_value);
+        }
+
+        #[cfg(not(feature = "js_this"))]
+        if let Some(this) = &func.this {
+            vm.define_variable("this".to_string(), this.clone());
+        }
+
+        for stmt in &func.body.statements {
+            self.run_statement(stmt, vm)?;
+        }
+
+        let return_value = match vm.current_stack_frame() {
+            Ok(frame) => frame
+                .return_value
+                .clone()
+                .unwrap_or_else(|| Value::new_nil()),
+            Err(e) => {
+                return Err(error::RuntimeError::InternalError {
+                    message: e.to_string(),
+                }
+                .into());
+            }
+        };
+
+        vm.leave_function()?;
+
+        Ok(return_value)
+    }
+
     fn check_should_continue(&self, vm: &Vm<'de>) -> bool {
         vm.current_loop_context()
             .map_or(false, |loop_ctx| loop_ctx.should_continue)
@@ -1026,6 +1404,22 @@ impl<'de> Evaluator<'de> {
                 // Add the class name to local variables
                 self.local_vars
                     .insert(decl.inner.id.inner.name.as_ref().to_string());
+            }
+
+            fn visit_print_statement(
+                &mut self,
+                print_statement: &'ast Statement<'de>,
+            ) -> Self::Output {
+                // @XXX: print will cause side effect, so we pretend it is a global function
+                // so the function will not be regarded as a pure function and not get cached incorrectly
+                self.binding_env
+                    .insert("print".to_string(), self.vm.global.clone());
+
+                let StatementInner::Print(expr) = &**print_statement else {
+                    unreachable!("this must be a print statement")
+                };
+
+                self.visit_expression(expr)
             }
         }
 

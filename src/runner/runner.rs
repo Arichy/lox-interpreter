@@ -141,6 +141,15 @@ pub struct StackFrame<'de> {
     pub return_value: Option<Value<'de>>,
     pub env_before_call: Environment<'de>,
     pub closure_binding_env: ClosureBindingEnv<'de>,
+
+    // When js_this is enabled, we will store `this` on stack frame to dynamically bind `this` to callee object.
+    // We also need a `captured_this_value` to handle closure which captures `this` in a method.
+    // In default behavior when the feature is disabled, we could capture `this` in local bindings because `this` could be considered as a special variable.
+    // But in this feature, we cannot do it because `this` cannot be considered as a variable, so we need this ad-hoc field to store `this`.
+    #[cfg(feature = "js_this")]
+    pub this_value: Option<Value<'de>>,
+    #[cfg(feature = "js_this")]
+    pub captured_this_value: Option<Value<'de>>,
 }
 
 impl<'de> StackFrame<'de> {
@@ -152,6 +161,10 @@ impl<'de> StackFrame<'de> {
             env_before_call,
             return_value: None,
             closure_binding_env,
+            #[cfg(feature = "js_this")]
+            this_value: None,
+            #[cfg(feature = "js_this")]
+            captured_this_value: None,
         }
     }
 }

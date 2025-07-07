@@ -108,7 +108,6 @@ pub enum Op {
     Or,
     Equal,
     Call,
-    Field,
 }
 impl fmt::Display for Op {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -127,11 +126,10 @@ impl fmt::Display for Op {
                 Op::Greater => ">",
                 Op::Slash => "/",
                 Op::Bang => "!",
-                Op::And => "and",
-                Op::Or => "or",
+                Op::And => "&&",
+                Op::Or => "||",
                 Op::Call => "call",
                 Op::Equal => "=",
-                Op::Field => ".",
             }
         )
     }
@@ -389,7 +387,7 @@ pub struct CallExpressionInner<'de> {
 pub type CallExpression<'de> = Spanned<CallExpressionInner<'de>>;
 impl fmt::Display for CallExpression<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "({}", self.inner.callee)?;
+        write!(f, "(call {}", self.inner.callee)?;
         for arg in &self.inner.arguments {
             write!(f, " {}", arg)?;
         }
@@ -400,6 +398,7 @@ impl fmt::Display for CallExpression<'_> {
 // Member Expression
 #[derive(Debug, Clone, PartialEq)]
 pub struct MemberExpressionInner<'de> {
+    pub computed: bool,
     pub object: Box<Expression<'de>>,
     pub property: Box<Expression<'de>>,
 }
@@ -411,6 +410,10 @@ impl fmt::Display for MemberExpression<'_> {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct ThisExpressionInner;
+pub type ThisExpression = Spanned<ThisExpressionInner>;
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum ExpressionInner<'de> {
     Literal(Literal<'de>),
     Identifier(Identifier<'de>),
@@ -420,7 +423,9 @@ pub enum ExpressionInner<'de> {
     Assignment(AssignmentExpression<'de>),
     Call(CallExpression<'de>),
     Member(MemberExpression<'de>),
+    This(ThisExpression),
 }
+
 pub type Expression<'de> = Spanned<ExpressionInner<'de>>;
 impl fmt::Display for Expression<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -441,15 +446,12 @@ impl fmt::Display for Expression<'_> {
                 "({} {} {})",
                 assignment.inner.operator, assignment.inner.left, assignment.inner.right
             ),
-            ExpressionInner::Call(call) => {
-                write!(f, "({}", call.inner.callee)?;
-                for arg in &call.inner.arguments {
-                    write!(f, " {}", arg)?;
-                }
-                write!(f, ")")
-            }
+            ExpressionInner::Call(call) => write!(f, "{}", call),
             ExpressionInner::Member(member) => {
                 write!(f, "({}.{})", member.inner.object, member.inner.property)
+            }
+            ExpressionInner::This(_) => {
+                write!(f, "this")
             }
         }
     }
@@ -647,7 +649,12 @@ pub trait Visitor<'ast, 'de> {
             ExpressionInner::Assignment(assign) => self.visit_assignment_expression(assign),
             ExpressionInner::Call(call) => self.visit_call_expression(call),
             ExpressionInner::Member(member) => self.visit_member_expression(member),
+            ExpressionInner::This(this) => self.visit_this_epxression(this),
         }
+    }
+
+    fn visit_this_epxression(&mut self, this_expr: &'ast ThisExpression) -> Self::Output {
+        Self::Output::default()
     }
 
     fn visit_literal(&mut self, _literal: &'ast Literal<'de>) -> Self::Output {
@@ -765,7 +772,7 @@ pub trait Visitor<'ast, 'de> {
     fn visit_statement(&mut self, statement: &'ast Statement<'de>) -> Self::Output {
         match &statement.inner {
             StatementInner::Expression(expr) => self.visit_expression(expr),
-            StatementInner::Print(expr) => self.visit_expression(expr),
+            StatementInner::Print(expr) => self.visit_print_statement(statement),
             StatementInner::Return(expr) => {
                 if let Some(expr) = expr {
                     self.visit_expression(expr);
@@ -784,6 +791,14 @@ pub trait Visitor<'ast, 'de> {
             StatementInner::Break => Self::Output::default(),
             StatementInner::Continue => Self::Output::default(),
         }
+    }
+
+    fn visit_print_statement(&mut self, print_statement: &'ast Statement<'de>) -> Self::Output {
+        let StatementInner::Print(expr) = &**print_statement else {
+            unreachable!()
+        };
+
+        self.visit_expression(expr)
     }
 }
 

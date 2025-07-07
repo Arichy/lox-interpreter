@@ -113,6 +113,16 @@ pub enum RuntimeError {
         err_span: SourceSpan,
     },
 
+    #[error("TypeError: {ident} must be a {expected_type}")]
+    TypeError {
+        #[source_code]
+        src: String,
+        ident: String,
+        expected_type: String,
+        #[label = "here"]
+        err_span: SourceSpan,
+    },
+
     #[error("Bad Operand: for {operator}, {reason}")]
     BadOperandError {
         #[source_code]
@@ -128,6 +138,23 @@ pub enum RuntimeError {
         #[source_code]
         src: String,
         cause: String,
+        #[label = "here"]
+        err_span: SourceSpan,
+    },
+
+    #[error("SyntaxError: this must be inside a class method")]
+    InvalidThis {
+        #[source_code]
+        src: String,
+        #[label = "here"]
+        err_span: SourceSpan,
+    },
+
+    #[error("UndefinedProperty: `{property}` does not exist on this object")]
+    UndefinedProperty {
+        #[source_code]
+        src: String,
+        property: String,
         #[label = "here"]
         err_span: SourceSpan,
     },

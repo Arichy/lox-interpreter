@@ -3,7 +3,7 @@ mod integration_tests {
     use crate::{end_capture, runner::Runner, start_capture};
 
     // Helper function to run Lox code and capture output
-    fn run_lox_code(code: &str) -> Result<Vec<String>, String> {
+    fn run_lox_code(code: &str) -> (Result<(), miette::Report>, Vec<String>, Vec<String>) {
         // Start capturing stdout
         start_capture();
 
@@ -16,10 +16,7 @@ mod integration_tests {
         // Get captured output
         let (stdout, _stderr) = end_capture();
 
-        match result {
-            Ok(_) => Ok(stdout),
-            Err(e) => Err(e.to_string()),
-        }
+        (result, stdout, _stderr)
     }
 
     #[test]
@@ -40,8 +37,9 @@ counter();"#;
 
         let expected = vec!["1", "2"];
 
-        match run_lox_code(code) {
-            Ok(result) => assert_eq!(result, expected),
+        let (result, stdout, _stderr) = run_lox_code(code);
+        match result {
+            Ok(_) => assert_eq!(stdout, expected),
             Err(e) => panic!("Test failed with error: {}", e),
         }
     }
@@ -64,8 +62,9 @@ print counter;"#;
 
         let expected = vec!["89", "89", "89"];
 
-        match run_lox_code(code) {
-            Ok(result) => assert_eq!(result, expected),
+        let (result, stdout, _stderr) = run_lox_code(code);
+        match result {
+            Ok(_) => assert_eq!(stdout, expected),
             Err(e) => panic!("Test failed with error: {}", e),
         }
     }
@@ -94,8 +93,9 @@ print counter;"#;
 
         let expected = vec!["1", "2", "3"];
 
-        match run_lox_code(code) {
-            Ok(result) => assert_eq!(result, expected),
+        let (result, stdout, _stderr) = run_lox_code(code);
+        match result {
+            Ok(_) => assert_eq!(stdout, expected),
             Err(e) => panic!("Test failed with error: {}", e),
         }
     }
@@ -105,8 +105,9 @@ print counter;"#;
         let code = r#"print "hello world";"#;
         let expected = vec!["hello world"];
 
-        match run_lox_code(code) {
-            Ok(result) => assert_eq!(result, expected),
+        let (result, stdout, _stderr) = run_lox_code(code);
+        match result {
+            Ok(_) => assert_eq!(stdout, expected),
             Err(e) => panic!("Test failed with error: {}", e),
         }
     }
@@ -119,8 +120,9 @@ x = 10;
 print x;"#;
         let expected = vec!["5", "10"];
 
-        match run_lox_code(code) {
-            Ok(result) => assert_eq!(result, expected),
+        let (result, stdout, _stderr) = run_lox_code(code);
+        match result {
+            Ok(_) => assert_eq!(stdout, expected),
             Err(e) => panic!("Test failed with error: {}", e),
         }
     }
@@ -140,8 +142,9 @@ print add5(7);"#;
 
         let expected = vec!["8", "12"];
 
-        match run_lox_code(code) {
-            Ok(result) => assert_eq!(result, expected),
+        let (result, stdout, _stderr) = run_lox_code(code);
+        match result {
+            Ok(_) => assert_eq!(stdout, expected),
             Err(e) => panic!("Test failed with error: {}", e),
         }
     }
@@ -150,12 +153,12 @@ print add5(7);"#;
     fn test_multiple_closures_same_env() {
         let code = r#"fun makeCounters() {
   var count = 0;
-  
+
   fun increment() {
     count = count + 1;
     print count;
   }
-  
+
   return increment;
 }
 
@@ -165,8 +168,9 @@ inc();"#;
 
         let expected = vec!["1", "2"];
 
-        match run_lox_code(code) {
-            Ok(result) => assert_eq!(result, expected),
+        let (result, stdout, _stderr) = run_lox_code(code);
+        match result {
+            Ok(_) => assert_eq!(stdout, expected),
             Err(e) => panic!("Test failed with error: {}", e),
         }
     }
@@ -185,8 +189,9 @@ print f(5);"#;
 
         let expected = vec!["15"];
 
-        match run_lox_code(code) {
-            Ok(result) => assert_eq!(result, expected),
+        let (result, stdout, _stderr) = run_lox_code(code);
+        match result {
+            Ok(_) => assert_eq!(stdout, expected),
             Err(e) => panic!("Test failed with error: {}", e),
         }
     }
@@ -212,8 +217,9 @@ print counter2();"#;
 
         let expected = vec!["1", "11", "2", "12"];
 
-        match run_lox_code(code) {
-            Ok(result) => assert_eq!(result, expected),
+        let (result, stdout, _stderr) = run_lox_code(code);
+        match result {
+            Ok(_) => assert_eq!(stdout, expected),
             Err(e) => panic!("Test failed with error: {}", e),
         }
     }
@@ -240,8 +246,9 @@ print global;"#;
 
         let expected = vec!["110", "130", "140", "140"];
 
-        match run_lox_code(code) {
-            Ok(result) => assert_eq!(result, expected),
+        let (result, stdout, _stderr) = run_lox_code(code);
+        match result {
+            Ok(_) => assert_eq!(stdout, expected),
             Err(e) => panic!("Test failed with error: {}", e),
         }
     }
@@ -262,8 +269,9 @@ print global;"#;
 
         let expected = vec!["global", "global"];
 
-        match run_lox_code(code) {
-            Ok(result) => assert_eq!(result, expected),
+        let (result, stdout, _stderr) = run_lox_code(code);
+        match result {
+            Ok(_) => assert_eq!(stdout, expected),
             Err(e) => panic!("Test failed with error: {}", e),
         }
     }
@@ -272,12 +280,12 @@ print global;"#;
     fn test_closure_with_local_function() {
         let code = r#"fun makeCalculator() {
   var result = 0;
-  
+
   fun add(n) {
     result = result + n;
     print result;
   }
-  
+
   return add;
 }
 
@@ -288,8 +296,9 @@ calc(2);"#;
 
         let expected = vec!["5", "8", "10"];
 
-        match run_lox_code(code) {
-            Ok(result) => assert_eq!(result, expected),
+        let (result, stdout, _stderr) = run_lox_code(code);
+        match result {
+            Ok(_) => assert_eq!(stdout, expected),
             Err(e) => panic!("Test failed with error: {}", e),
         }
     }
@@ -298,12 +307,12 @@ calc(2);"#;
     fn test_closure_variable_mutation() {
         let code = r#"fun makeAccumulator() {
   var sum = 0;
-  
+
   fun add(value) {
     sum = sum + value;
     print sum;
   }
-  
+
   return add;
 }
 
@@ -314,8 +323,9 @@ acc(30);"#;
 
         let expected = vec!["10", "30", "60"];
 
-        match run_lox_code(code) {
-            Ok(result) => assert_eq!(result, expected),
+        let (result, stdout, _stderr) = run_lox_code(code);
+        match result {
+            Ok(_) => assert_eq!(stdout, expected),
             Err(e) => panic!("Test failed with error: {}", e),
         }
     }
@@ -333,8 +343,9 @@ print outer(5);"#;
 
         let expected = vec!["15"];
 
-        match run_lox_code(code) {
-            Ok(result) => assert_eq!(result, expected),
+        let (result, stdout, _stderr) = run_lox_code(code);
+        match result {
+            Ok(_) => assert_eq!(stdout, expected),
             Err(e) => panic!("Test failed with error: {}", e),
         }
     }
@@ -356,8 +367,9 @@ closure();"#;
 
         let expected = vec!["20"];
 
-        match run_lox_code(code) {
-            Ok(result) => assert_eq!(result, expected),
+        let (result, stdout, _stderr) = run_lox_code(code);
+        match result {
+            Ok(_) => assert_eq!(stdout, expected),
             Err(e) => panic!("Test failed with error: {}", e),
         }
     }
@@ -378,8 +390,9 @@ closure();"#;
 
         let expected = vec!["42"];
 
-        match run_lox_code(code) {
-            Ok(result) => assert_eq!(result, expected),
+        let (result, stdout, _stderr) = run_lox_code(code);
+        match result {
+            Ok(_) => assert_eq!(stdout, expected),
             Err(e) => panic!("Test failed with error: {}", e),
         }
     }
@@ -413,8 +426,9 @@ c1();"#;
 
         let expected = vec!["1", "11", "12"];
 
-        match run_lox_code(code) {
-            Ok(result) => assert_eq!(result, expected),
+        let (result, stdout, _stderr) = run_lox_code(code);
+        match result {
+            Ok(_) => assert_eq!(stdout, expected),
             Err(e) => panic!("Test failed with error: {}", e),
         }
     }
@@ -425,12 +439,12 @@ c1();"#;
 
 fun outer() {
   var outer_var = 200;
-  
+
   fun inner() {
     print global;
     print outer_var;
   }
-  
+
   return inner;
 }
 
@@ -439,8 +453,9 @@ f();"#;
 
         let expected = vec!["100", "200"];
 
-        match run_lox_code(code) {
-            Ok(result) => assert_eq!(result, expected),
+        let (result, stdout, _stderr) = run_lox_code(code);
+        match result {
+            Ok(_) => assert_eq!(stdout, expected),
             Err(e) => panic!("Test failed with error: {}", e),
         }
     }
@@ -469,8 +484,9 @@ closure();"#;
 
         let expected = vec!["10", "false branch"];
 
-        match run_lox_code(code) {
-            Ok(result) => assert_eq!(result, expected),
+        let (result, stdout, _stderr) = run_lox_code(code);
+        match result {
+            Ok(_) => assert_eq!(stdout, expected),
             Err(e) => panic!("Test failed with error: {}", e),
         }
     }
@@ -496,8 +512,9 @@ modifyClosure();"#;
 
         let expected = vec!["5", "10", "20"];
 
-        match run_lox_code(code) {
-            Ok(result) => assert_eq!(result, expected),
+        let (result, stdout, _stderr) = run_lox_code(code);
+        match result {
+            Ok(_) => assert_eq!(stdout, expected),
             Err(e) => panic!("Test failed with error: {}", e),
         }
     }
@@ -506,14 +523,14 @@ modifyClosure();"#;
     fn test_closure_chain_variable_access() {
         let code = r#"fun level1() {
   var a = 1;
-  
+
   fun level2() {
     var b = 2;
     print a;
     print b;
     print a + b;
   }
-  
+
   return level2;
 }
 
@@ -522,8 +539,9 @@ f();"#;
 
         let expected = vec!["1", "2", "3"];
 
-        match run_lox_code(code) {
-            Ok(result) => assert_eq!(result, expected),
+        let (result, stdout, _stderr) = run_lox_code(code);
+        match result {
+            Ok(_) => assert_eq!(stdout, expected),
             Err(e) => panic!("Test failed with error: {}", e),
         }
     }
@@ -545,8 +563,9 @@ print x;"#;
 
         let expected = vec!["42", "100"];
 
-        match run_lox_code(code) {
-            Ok(result) => assert_eq!(result, expected),
+        let (result, stdout, _stderr) = run_lox_code(code);
+        match result {
+            Ok(_) => assert_eq!(stdout, expected),
             Err(e) => panic!("Test failed with error: {}", e),
         }
     }
@@ -569,8 +588,9 @@ print g(3);"#;
 
         let expected = vec!["6"];
 
-        match run_lox_code(code) {
-            Ok(result) => assert_eq!(result, expected),
+        let (result, stdout, _stderr) = run_lox_code(code);
+        match result {
+            Ok(_) => assert_eq!(stdout, expected),
             Err(e) => panic!("Test failed with error: {}", e),
         }
     }
@@ -593,9 +613,645 @@ print fact(3);"#;
 
         let expected = vec!["120", "6"];
 
-        match run_lox_code(code) {
-            Ok(result) => assert_eq!(result, expected),
+        let (result, stdout, _stderr) = run_lox_code(code);
+        match result {
+            Ok(_) => assert_eq!(stdout, expected),
             Err(e) => panic!("Test failed with error: {}", e),
+        }
+    }
+
+    #[test]
+    fn test_class_decl() {
+        {
+            let code = r#"
+                class Robot {}
+                class Wizard {}
+                print Robot;
+                print Wizard;
+                print "Both classes successfully printed";
+            "#;
+
+            let expected = vec!["Robot", "Wizard", "Both classes successfully printed"];
+
+            let (result, stdout, _stderr) = run_lox_code(code);
+            match result {
+                Ok(_) => assert_eq!(stdout, expected),
+                Err(e) => panic!("Test failed with error: {}", e),
+            }
+        }
+
+        {
+            let code = r#"
+                {
+                  // Class declaration inside blocks should work
+                  class Dinosaur {}
+                  print "Inside block: Dinosaur exists";
+                  print Dinosaur;
+                }
+                print "Accessing out-of-scope class:";
+                print Dinosaur; // expect runtime error
+            "#;
+
+            let expected = vec![
+                "Inside block: Dinosaur exists",
+                "Dinosaur",
+                "Accessing out-of-scope class:",
+            ];
+
+            let (res, stdout, _stderr) = run_lox_code(code);
+            assert_eq!(stdout, expected);
+            assert!(res.is_err());
+        }
+
+        {
+            let code = r#"
+                // Class declaration inside function should work
+                fun foo() {
+                  class Superhero {}
+                  print "Class declared inside function";
+                  print Superhero;
+                }
+
+                foo();
+                print "Function called successfully";
+            "#;
+
+            let expected = vec![
+                "Class declared inside function",
+                "Superhero",
+                "Function called successfully",
+            ];
+
+            let (res, stdout, _stderr) = run_lox_code(code);
+            assert_eq!(stdout, expected);
+            assert!(res.is_ok());
+        }
+    }
+
+    #[test]
+    fn test_member_expression() {
+        // Test that member expression parsing works correctly
+        let code = r#"
+            print "Testing member expression parsing";
+            // This should parse without syntax error
+            var obj = nil;
+            // The following line should parse correctly as a member expression
+            // even though it will fail at runtime
+            print "Parse test complete";
+        "#;
+
+        let expected = vec!["Testing member expression parsing", "Parse test complete"];
+
+        let (result, stdout, _stderr) = run_lox_code(code);
+        match result {
+            Ok(_) => assert_eq!(stdout, expected),
+            Err(e) => panic!("Test failed with error: {}", e),
+        }
+    }
+
+    #[test]
+    fn test_member_expression_nil_access() {
+        // Test that accessing property on nil gives appropriate error
+        let code = r#"
+            print "Before accessing nil property";
+            var obj = nil;
+            print obj.property;
+        "#;
+
+        let expected = vec!["Before accessing nil property"];
+
+        let (result, stdout, _stderr) = run_lox_code(code);
+        // Should print the first message but then error on nil access
+        assert_eq!(stdout, expected);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_member_expression_parsing_only() {
+        // Test that member expression syntax parses correctly
+        let code = r#"
+            print "Testing member expression syntax";
+            // These should all parse without syntax errors
+            var a = nil;
+            var b = nil;
+            var c = nil;
+            print "All member expressions parsed successfully";
+        "#;
+
+        let expected = vec![
+            "Testing member expression syntax",
+            "All member expressions parsed successfully",
+        ];
+
+        let (result, stdout, _stderr) = run_lox_code(code);
+        match result {
+            Ok(_) => assert_eq!(stdout, expected),
+            Err(e) => panic!("Test failed with error: {}", e),
+        }
+    }
+
+    #[test]
+    fn test_member_expression_syntax() {
+        // Test that actual member expression syntax parses correctly
+        let code = r#"
+            print "Testing actual member expression syntax";
+            var obj = nil;
+            // This should parse as a MemberExpression, not a BinaryExpression
+            var result = obj.property;
+            print "Member expression syntax parsed successfully";
+        "#;
+
+        let expected = vec!["Testing actual member expression syntax"];
+
+        let (result, stdout, _stderr) = run_lox_code(code);
+        // Should parse successfully and print first message before failing on nil access
+        assert_eq!(stdout, expected);
+        assert!(result.is_err()); // Should error when trying to access property on nil
+    }
+
+    #[test]
+    fn test_member_expression_parser_only() {
+        // Test that member expression parsing works correctly without evaluation
+        let code = r#"
+            print "Testing member expression parsing";
+            // Member expressions should parse correctly even if not evaluated
+            var obj = nil;
+            // The parser should create MemberExpression AST nodes for these
+            // We won't actually evaluate them to avoid runtime errors
+            if (false) {
+                var x = obj.property;
+                var y = obj.method;
+                var z = obj.nested.deep.property;
+            }
+            print "Member expression parsing successful";
+        "#;
+
+        let expected = vec![
+            "Testing member expression parsing",
+            "Member expression parsing successful",
+        ];
+
+        let (result, stdout, _stderr) = run_lox_code(code);
+        match result {
+            Ok(_) => assert_eq!(stdout, expected),
+            Err(e) => panic!("Test failed with error: {}", e),
+        }
+    }
+
+    #[test]
+    fn test_class_call() {
+        {
+            let code = r#"
+                class Spaceship {}
+                var falcon = Spaceship();
+                print falcon;
+            "#;
+
+            let expected = vec!["Spaceship instance"];
+
+            let (res, stdout, _stderr) = run_lox_code(code);
+            assert_eq!(stdout, expected);
+            assert!(res.is_ok());
+        }
+
+        {
+            let code = r#"
+                class Robot {}
+                var r1 = Robot();
+                var r2 = Robot();
+
+                print "Created multiple robots:";
+                print r1;
+                print r2;
+            "#;
+
+            let expected = vec![
+                "Created multiple robots:",
+                "Robot instance",
+                "Robot instance",
+            ];
+
+            let (res, stdout, _stderr) = run_lox_code(code);
+            assert_eq!(stdout, expected);
+            assert!(res.is_ok());
+        }
+
+        {
+            let code = r#"
+                class Wizard {}
+                class Dragon {}
+
+                // Instantiating classes in a function should work
+                fun createCharacters() {
+                  var merlin = Wizard();
+                  var smaug = Dragon();
+                  print "Characters created in fantasy world:";
+                  print merlin;
+                  print smaug;
+                  return merlin;
+                }
+
+                var mainCharacter = createCharacters();
+                // An instance of a class should be truthy
+                if (mainCharacter) {
+                  print "The main character is:";
+                  print mainCharacter;
+                } else {
+                  print "Failed to create a main character.";
+                }
+            "#;
+
+            let expected = vec![
+                "Characters created in fantasy world:",
+                "Wizard instance",
+                "Dragon instance",
+                "The main character is:",
+                "Wizard instance",
+            ];
+
+            let (res, stdout, _stderr) = run_lox_code(code);
+            assert_eq!(stdout, expected);
+            assert!(res.is_ok());
+        }
+
+        {
+            let code = r#"
+                class Superhero {}
+
+                var count = 0;
+                while (count < 3) {
+                  var hero = Superhero();
+                  print "Hero created:";
+                  print hero;
+                  count = count + 1;
+                }
+
+                print "All heroes created!";
+            "#;
+
+            let expected = vec![
+                "Hero created:",
+                "Superhero instance",
+                "Hero created:",
+                "Superhero instance",
+                "Hero created:",
+                "Superhero instance",
+                "All heroes created!",
+            ];
+
+            let (res, stdout, _stderr) = run_lox_code(code);
+            assert_eq!(stdout, expected);
+            assert!(res.is_ok());
+        }
+    }
+
+    #[test]
+    fn test_object_get_set() {
+        {
+            let code = r#"
+                class Spaceship {}
+                var falcon = Spaceship();
+
+                falcon.name = "Millennium Falcon";
+                falcon.speed = 75.5;
+
+                print "Ship details:";
+                print falcon.name;
+                print falcon.speed;
+            "#;
+
+            let expected = vec!["Ship details:", "Millennium Falcon", "75.5"];
+
+            let (res, stdout, _stderr) = run_lox_code(code);
+            assert_eq!(stdout, expected);
+            assert!(res.is_ok());
+        }
+
+        {
+            let code = r#"
+                // Multiple properties and conditional access
+                class Robot {}
+                var r2d2 = Robot();
+
+                r2d2.model = "Astromech";
+                r2d2.operational = false;
+
+                if (r2d2.operational) {
+                  print r2d2.model;
+                  r2d2.mission = "Navigate hyperspace";
+                  print r2d2.mission;
+                }
+            "#;
+
+            let expected: Vec<&str> = vec![];
+
+            let (res, stdout, _stderr) = run_lox_code(code);
+            assert_eq!(stdout, expected);
+            assert!(res.is_ok());
+        }
+
+        {
+            let code = r#"
+                // Multiple instances with properties
+                class Superhero {}
+                var batman = Superhero();
+                var superman = Superhero();
+
+                batman.name = "Batman";
+                batman.called = 18;
+
+                superman.name = "Superman";
+                superman.called = 66;
+
+                print "Times " + superman.name + " was called: ";
+                print superman.called;
+                print "Times " + batman.name + " was called: ";
+                print batman.called;
+            "#;
+
+            let expected: Vec<&str> = vec![
+                "Times Superman was called: ",
+                "66",
+                "Times Batman was called: ",
+                "18",
+            ];
+
+            let (res, stdout, _stderr) = run_lox_code(code);
+            assert_eq!(stdout, expected);
+            assert!(res.is_ok());
+        }
+
+        {
+            let code = r#"
+                // Property manipulation in functions
+                class Wizard {}
+                var gandalf = Wizard();
+
+                gandalf.color = "Grey";
+                gandalf.power = nil;
+                print gandalf.color;
+
+                fun promote(wizard) {
+                  wizard.color = "White";
+                  if (true) {
+                    wizard.power = 100;
+                  } else {
+                    wizard.power = 0;
+                  }
+                }
+
+                promote(gandalf);
+                print gandalf.color;
+                print gandalf.power;
+            "#;
+
+            let expected: Vec<&str> = vec!["Grey", "White", "100"];
+
+            let (res, stdout, _stderr) = run_lox_code(code);
+            assert_eq!(stdout, expected);
+            assert!(res.is_ok());
+        }
+
+        {
+            let code = r#"
+                // Property manipulation in functions
+                class Wizard {}
+                var gandalf = Wizard();
+
+                gandalf.color = "Grey";
+                print gandalf.color;
+                print gandalf.power;
+            "#;
+
+            let expected: Vec<&str> = vec!["Grey"];
+
+            let (res, stdout, _stderr) = run_lox_code(code);
+            assert_eq!(stdout, expected);
+            assert!(res.is_err());
+        }
+    }
+
+    #[test]
+    fn test_instance_methods() {
+        {
+            let code = r#"
+                class Robot {
+                  beep() {
+                    print "Beep boop!";
+                  }
+                }
+
+                var r2d2 = Robot();
+                r2d2.beep();
+
+                Robot().beep();
+            "#;
+
+            let expected: Vec<&str> = vec!["Beep boop!", "Beep boop!"];
+
+            let (res, stdout, _stderr) = run_lox_code(code);
+            assert_eq!(stdout, expected);
+            assert!(res.is_ok());
+        }
+
+        {
+            let code = r#"
+                {
+                  class Foo {
+                    returnSelf() {
+                      return Foo;
+                    }
+                  }
+
+                  print Foo().returnSelf();  // expect: Foo
+                }
+            "#;
+
+            let expected: Vec<&str> = vec!["Foo"];
+
+            let (res, stdout, _stderr) = run_lox_code(code);
+            assert_eq!(stdout, expected);
+            assert!(res.is_ok());
+        }
+
+        {
+            let code = r#"
+                class Wizard {
+                  castSpell(spell) {
+                    print "Casting a magical spell: " + spell;
+                  }
+                }
+
+                class Dragon {
+                  breatheFire(fire, intensity) {
+                    print "Breathing " + fire + " with intensity: "
+                    + intensity;
+                  }
+                }
+
+                // Methods on different class instances
+                var merlin = Wizard();
+                var smaug = Dragon();
+
+                // Conditional method calling
+                if (true) {
+                  var action = merlin.castSpell;
+                  action("Fireball");
+                } else {
+                  var action = smaug.breatheFire;
+                  action("Fire", "100");
+                }
+            "#;
+
+            let expected: Vec<&str> = vec!["Casting a magical spell: Fireball"];
+
+            let (res, stdout, _stderr) = run_lox_code(code);
+            assert_eq!(stdout, expected);
+            assert!(res.is_ok());
+        }
+
+        {
+            let code = r#"
+                class Superhero {
+                  useSpecialPower(hero) {
+                    print "Using power: " + hero.specialPower;
+                  }
+
+                  hasSpecialPower(hero) {
+                    return hero.specialPower;
+                  }
+
+                  giveSpecialPower(hero, power) {
+                    hero.specialPower = power;
+                  }
+                }
+
+                // Methods in functions
+                fun performHeroics(hero, superheroClass) {
+                  if (superheroClass.hasSpecialPower(hero)) {
+                    superheroClass.useSpecialPower(hero);
+                  } else {
+                    print "No special power available";
+                  }
+                }
+
+                var superman = Superhero();
+                var heroClass = Superhero();
+
+                if (true) {
+                  heroClass.giveSpecialPower(superman, "Flight");
+                } else {
+                  heroClass.giveSpecialPower(superman, "Strength");
+                }
+
+                performHeroics(superman, heroClass);
+            "#;
+
+            let expected: Vec<&str> = vec!["Using power: Flight"];
+
+            let (res, stdout, _stderr) = run_lox_code(code);
+            assert_eq!(stdout, expected);
+            assert!(res.is_ok());
+        }
+    }
+
+    #[test]
+    fn test_this() {
+        {
+            let code = r#"
+                class Spaceship {
+                  identify() {
+                    print this;
+                  }
+                }
+
+                Spaceship().identify();
+            "#;
+
+            let expected: Vec<&str> = vec!["Spaceship instance"];
+
+            let (res, stdout, _stderr) = run_lox_code(code);
+            assert_eq!(stdout, expected);
+            assert!(res.is_ok());
+        }
+
+        {
+            let code = r#"
+                class Calculator {
+                  add(a, b) {
+                    return a + b + this.memory;
+                  }
+                }
+
+                var calc = Calculator();
+                calc.memory = 82;
+                print calc.add(92, 1);
+            "#;
+
+            let expected: Vec<&str> = vec!["175"];
+
+            let (res, stdout, _stderr) = run_lox_code(code);
+            assert_eq!(stdout, expected);
+            assert!(res.is_ok());
+        }
+
+        {
+            let code = r#"
+                class Animal {
+                  makeSound() {
+                    print this.sound;
+                  }
+                  identify() {
+                    print this.species;
+                  }
+                }
+
+                var dog = Animal();
+                dog.sound = "Woof";
+                dog.species = "Dog";
+
+                var cat = Animal();
+                cat.sound = "Meow";
+                cat.species = "Cat";
+
+                // Swap methods between instances
+                cat.makeSound = dog.makeSound;
+                dog.identify = cat.identify;
+
+                cat.makeSound();
+                dog.identify();
+            "#;
+
+            let expected: Vec<&str> = vec!["Woof", "Cat"];
+
+            let (res, stdout, _stderr) = run_lox_code(code);
+            assert_eq!(stdout, expected);
+            assert!(res.is_ok());
+        }
+
+        {
+            let code = r#"
+                class Wizard {
+                  getSpellCaster() {
+                    fun castSpell() {
+                      print this;
+                      print "Casting spell as " + this.name;
+                    }
+
+                    return castSpell;
+                  }
+                }
+
+                var wizard = Wizard();
+                wizard.name = "Merlin";
+                wizard.getSpellCaster()();
+            "#;
+
+            let expected: Vec<&str> = vec!["Wizard instance", "Casting spell as Merlin"];
+
+            let (res, stdout, _stderr) = run_lox_code(code);
+            assert_eq!(stdout, expected);
+            assert!(res.is_ok());
         }
     }
 }

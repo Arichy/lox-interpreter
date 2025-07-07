@@ -37,12 +37,8 @@ pub fn start_capture() {
 
 #[cfg(test)]
 pub fn end_capture() -> (Vec<String>, Vec<String>) {
-    let stdout = CAPTURED_STDOUT.with(|output| {
-        output.borrow_mut().take().unwrap_or_default()
-    });
-    let stderr = CAPTURED_STDERR.with(|output| {
-        output.borrow_mut().take().unwrap_or_default()
-    });
+    let stdout = CAPTURED_STDOUT.with(|output| output.borrow_mut().take().unwrap_or_default());
+    let stderr = CAPTURED_STDERR.with(|output| output.borrow_mut().take().unwrap_or_default());
     (stdout, stderr)
 }
 

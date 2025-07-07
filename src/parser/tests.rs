@@ -207,3 +207,30 @@ fn parse_class() {
         assert_eq!(tt.to_string(), "(class Robot method beep)");
     }
 }
+
+#[test]
+fn test_call_expr() {
+    {
+        let code = r#"a.b.method();"#;
+
+        let mut parser = Parser::new(code);
+        let tts = parser.parse().unwrap();
+        let tt = tts.get(0).unwrap();
+        println!("{tt:#?}");
+    }
+}
+
+// #[test]
+// fn test_invalid_this() {
+//     {
+//         let code = r#"
+//             fun notAMethod() {
+//               print this;
+//             }
+//         "#;
+
+//         let mut parser = Parser::new(code);
+//         let res = parser.parse();
+//         assert!(res.is_err());
+//     }
+// }

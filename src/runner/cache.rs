@@ -31,9 +31,10 @@ pub fn build_cache_key(func_value: &Value, args: &[Value]) -> CacheKey {
             ValueInner::Number(n) => CacheableValue::Number(n.to_bits()),
             ValueInner::Bool(b) => CacheableValue::Bool(*b),
             ValueInner::Nil => CacheableValue::Nil,
-            ValueInner::Function(_) | ValueInner::NativeFunction(_) | ValueInner::Object(_) => {
-                CacheableValue::Reference(Rc::as_ptr(&arg.inner) as usize)
-            }
+            ValueInner::Function(_)
+            | ValueInner::NativeFunction(_)
+            | ValueInner::Object(_)
+            | ValueInner::Class(_) => CacheableValue::Reference(Rc::as_ptr(&arg.inner) as usize),
         })
         .collect();
 

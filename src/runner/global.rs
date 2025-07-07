@@ -27,9 +27,12 @@ pub struct Console {
 }
 impl Console {
     pub fn new<'de>() -> Value<'de> {
-        Value::new_object(HashMap::from_iter([(
-            "log".to_string(),
-            Value::new_native_function("log".to_string(), console::log),
-        )]))
+        Value::new_object(
+            None,
+            HashMap::from_iter([(
+                "log".to_string(),
+                Value::new_native_function("log".to_string(), console::log),
+            )]),
+        )
     }
 }
