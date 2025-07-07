@@ -81,7 +81,7 @@ fn main() -> miette::Result<()> {
 
             match parser.parse() {
                 Ok(tt_list) => {
-                    for tt in tt_list {
+                    for tt in &tt_list.inner.body {
                         imp::log_stdout!("{tt}")
                     }
                 }

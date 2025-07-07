@@ -11,7 +11,7 @@ use crate::{
         ForStatement, ForStatementInner, FunctionDeclaration, FunctionDeclarationInner,
         GroupExpression, GroupExpressionInner, Identifier, IdentifierInner, IfStatement,
         IfStatementInner, Literal, LiteralInner, MemberExpression, MemberExpressionInner,
-        NilLiteral, NilLiteralInner, NumberLiteral, NumberLiteralInner, Op, Statement,
+        NilLiteral, NilLiteralInner, NumberLiteral, NumberLiteralInner, Op, PrintStatementInner, Program, ProgramInner, Spanned, Statement,
         StatementInner, StringLiteral, StringLiteralInner, ThisExpression, ThisExpressionInner,
         TokenTree, TokenTreeInner, UnaryExpression, UnaryExpressionInner, VariableDeclaration,
         VariableDeclarationInner, Visitor, WhileStatement, WhileStatementInner,
@@ -228,7 +228,7 @@ impl<'de> Parser<'de> {
         }
     }
 
-    pub fn parse(&mut self) -> Result<Vec<Statement<'de>>, Error> {
+    pub fn parse(&mut self) -> Result<Program<'de>, Error> {
         self.state.push_scope(ScopeType::Global);
         self.state.push_scope(ScopeType::Module);
 
@@ -250,7 +250,11 @@ impl<'de> Parser<'de> {
 
         self.state.pop_scope();
         self.state.pop_scope();
-        Ok(statements)
+        let program = Program {
+            inner: ProgramInner { body: statements },
+            range: (0, self.whole.len()),
+        };
+        Ok(program)
     }
 
     pub fn whole(&self) -> &str {
@@ -755,7 +759,7 @@ impl<'de> Parser<'de> {
 
                 Statement {
                     range,
-                    inner: StatementInner::Print(expr),
+                    inner: StatementInner::Print(Spanned { inner: PrintStatementInner { expression: expr.clone() }, range: expr.range }),
                 }
             }
 
@@ -1612,17 +1616,16 @@ impl<'de> Parser<'de> {
     }
 }
 
-impl<'de> Iterator for Parser<'de> {
-    type Item = Result<Statement<'de>, Error>;
+// impl<'de> Iterator for Parser<'de> {
+//     type Item = Result<Program<'de>, Error>;
 
-    fn next(&mut self) -> Option<Self::Item> {
-        match self.parse_statement() {
-            Ok(Some(statement)) => Some(Ok(statement)),
-            Ok(None) => None,
-            Err(err) => Some(Err(err)),
-        }
-    }
-}
+//     fn next(&mut self) -> Option<Self::Item> {
+//         match self.parse() {
+//             Ok(program) => Some(Ok(program)),
+//             Err(err) => Some(Err(err)),
+//         }
+//     }
+// }
 
 #[cfg(test)]
 mod tests;

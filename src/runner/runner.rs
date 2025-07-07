@@ -392,18 +392,10 @@ impl<'de> Runner<'de> {
 
         self.vm.enter_module();
 
-        loop {
-            let statement = self.evaluator.parser.next();
-            match statement {
-                Some(Ok(statement)) => {
-                    self.run_statement(&statement)?;
-                }
-                Some(Err(err)) => {
-                    crate::log_stderr!("{err:?}");
-                    std::process::exit(65);
-                }
-                None => break,
-            }
+        let program = self.evaluator.parser.parse()?;
+
+        for statement in &program.body {
+            self.run_statement(&statement)?;
         }
 
         self.vm.leave_module();

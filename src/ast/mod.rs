@@ -177,9 +177,8 @@ impl<'de> VariableDeclaration<'de> {
         struct ExprVisitor<'de> {
             identifiers: HashSet<&'de str>,
         }
-        impl<'ast, 'de> Visitor<'ast, 'de> for ExprVisitor<'ast> {
-            type Output = ();
-            fn visit_identifier(&mut self, _identifier: &'ast Identifier<'de>) -> Self::Output {
+        impl<'ast, 'de> Visitor<'ast, 'de> for ExprVisitor<'de> where 'ast: 'de {
+            fn visit_identifier(&mut self, _identifier: &'ast Identifier<'de>, _ctx: &mut VisitContext<'ast, 'de>) {
                 self.identifiers.insert(&_identifier.name);
             }
         }
@@ -188,26 +187,25 @@ impl<'de> VariableDeclaration<'de> {
             id: &'ast Identifier<'de>,
             parser: &'p Parser<'de>,
         }
-        impl<'ast, 's, 'de> Visitor<'ast, 'de> for VariableDeclarationVisitor<'ast, 's, 'de> {
-            type Output = bool;
-
+        impl<'ast, 'p, 'de> Visitor<'ast, 'de, bool> for VariableDeclarationVisitor<'ast, 'p, 'de> where 'ast: 'de {
             fn visit_variable_declaration(
                 &mut self,
                 decl: &'ast VariableDeclaration<'de>,
-            ) -> Self::Output {
+                ctx: &mut VisitContext<'ast, 'de>,
+            ) -> bool {
                 if let Some(decl) = &decl.init {
-                    self.visit_expression(decl)
+                    self.visit_expression(decl, ctx)
                 } else {
                     true
                 }
             }
 
-            fn visit_expression(&mut self, expr: &Expression<'de>) -> Self::Output {
+            fn visit_expression(&mut self, expr: &'ast Expression<'de>, ctx: &mut VisitContext<'ast, 'de>) -> bool {
                 let mut expr_visitor = ExprVisitor {
                     identifiers: HashSet::default(),
                 };
 
-                expr_visitor.visit_expression(expr);
+                expr_visitor.visit_expression(expr, ctx);
 
                 let res = !expr_visitor.identifiers.contains(self.id.name.as_ref());
 
@@ -219,7 +217,8 @@ impl<'de> VariableDeclaration<'de> {
             parser,
         };
 
-        if visitor.visit_variable_declaration(self) {
+        let mut ctx = VisitContext::new();
+        if visitor.visit_variable_declaration(self, &mut ctx) {
             Ok(())
         } else {
             Err(error::SyntaxError {
@@ -229,6 +228,18 @@ impl<'de> VariableDeclaration<'de> {
             }
             .into())
         }
+    }
+}
+
+// Print Statement
+#[derive(Debug, Clone, PartialEq)]
+pub struct PrintStatementInner<'de> {
+    pub expression: Expression<'de>,
+}
+pub type PrintStatement<'de> = Spanned<PrintStatementInner<'de>>;
+impl fmt::Display for PrintStatement<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "(print {})", self.inner.expression)
     }
 }
 
@@ -550,7 +561,7 @@ impl fmt::Display for ForStatement<'_> {
 #[derive(Debug, Clone, PartialEq)]
 pub enum StatementInner<'de> {
     Expression(Expression<'de>),
-    Print(Expression<'de>),
+    Print(PrintStatement<'de>),
     Return(Option<Expression<'de>>),
     Block(BlockStatement<'de>),
     Declaration(Declaration<'de>),
@@ -565,7 +576,7 @@ impl fmt::Display for Statement<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.inner {
             StatementInner::Expression(expr) => write!(f, "{}", expr),
-            StatementInner::Print(expr) => write!(f, "(print {})", expr),
+            StatementInner::Print(print_stmt) => write!(f, "{}", print_stmt),
             StatementInner::Return(ret) => {
                 write!(f, "(return")?;
                 if let Some(value) = ret {
@@ -611,6 +622,21 @@ impl fmt::Display for Statement<'_> {
             StatementInner::Break => write!(f, "(break)"),
             StatementInner::Continue => write!(f, "(continue)"),
         }
+    }
+}
+
+// Program - Root AST Node
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProgramInner<'de> {
+    pub body: Vec<Statement<'de>>,
+}
+pub type Program<'de> = Spanned<ProgramInner<'de>>;
+impl fmt::Display for Program<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for statement in &self.inner.body {
+            writeln!(f, "{}", statement)?;
+        }
+        Ok(())
     }
 }
 

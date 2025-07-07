@@ -8,6 +8,8 @@ use std::{
 
 use rustc_hash::FxHashMap as HashMap;
 
+use crate::ast::VisitContext;
+
 use miette::{Error, LabeledSpan, SourceSpan};
 
 use crate::{
@@ -20,7 +22,7 @@ use crate::{
         FunctionDeclarationInner, GroupExpression, GroupExpressionInner, Identifier,
         IdentifierInner, IfStatement, IfStatementInner, Literal, LiteralInner, MemberExpression,
         MemberExpressionInner, NilLiteral, NilLiteralInner, NumberLiteral, NumberLiteralInner, Op,
-        Spanned, Statement, StatementInner, StringLiteral, StringLiteralInner, TokenTree,
+        PrintStatement, Spanned, Statement, StatementInner, StringLiteral, StringLiteralInner, TokenTree,
         TokenTreeInner, UnaryExpression, UnaryExpressionInner, VariableDeclaration,
         VariableDeclarationInner, Visitor, WhileStatement, WhileStatementInner,
     },
@@ -1168,8 +1170,8 @@ impl<'de> Evaluator<'de> {
                 }
             }
 
-            StatementInner::Print(expr) => {
-                let value = self.evaluate_expression(expr, vm)?;
+            StatementInner::Print(print_statement) => {
+                let value = self.evaluate_expression(&print_statement.expression, vm)?;
                 log_stdout!("{value}");
             }
 
@@ -1340,9 +1342,9 @@ impl<'de> Evaluator<'de> {
         }
 
         impl<'ast, 'vm, 'de, 'local> Visitor<'ast, 'de> for AstVisitor<'ast, 'vm, 'de, 'local> {
-            type Output = ();
+            
 
-            fn visit_identifier(&mut self, identifier: &'ast Identifier<'de>) -> Self::Output {
+            fn visit_identifier(&mut self, identifier: &'ast Identifier<'de>, _ctx: &mut VisitContext<'ast, 'de>) -> () {
                 let name = identifier.inner.name.as_ref();
 
                 // @FIXME: maybe we need to remove `&& !self.vm.global.bindings.borrow().contains_key(name)`
@@ -1370,29 +1372,32 @@ impl<'de> Evaluator<'de> {
             fn visit_assignment_expression(
                 &mut self,
                 expr: &'ast AssignmentExpression<'de>,
-            ) -> Self::Output {
-                self.visit_expression(&expr.inner.right);
+                ctx: &mut VisitContext<'ast, 'de>,
+            ) -> () {
+                self.visit_expression(&expr.inner.right, ctx);
                 // Note: assignment target is handled separately as it may introduce new local variables
             }
 
             fn visit_variable_declaration(
                 &mut self,
                 decl: &'ast VariableDeclaration<'de>,
-            ) -> Self::Output {
+                ctx: &mut VisitContext<'ast, 'de>,
+            ) -> () {
                 // Add the variable to local variables
                 self.local_vars
                     .insert(decl.inner.id.inner.name.as_ref().to_string());
 
                 // Visit the initializer if present
                 if let Some(init) = &decl.inner.init {
-                    self.visit_expression(init);
+                    self.visit_expression(init, ctx);
                 }
             }
 
             fn visit_function_declaration(
                 &mut self,
                 decl: &'ast FunctionDeclaration<'de>,
-            ) -> Self::Output {
+                _ctx: &mut VisitContext<'ast, 'de>,
+            ) -> () {
                 // Add the function name to local variables
                 self.local_vars
                     .insert(decl.inner.name.inner.name.as_ref().to_string());
@@ -1400,7 +1405,7 @@ impl<'de> Evaluator<'de> {
                 // Note: We don't visit the function body as it has its own scope
             }
 
-            fn visit_class_declaration(&mut self, decl: &ClassDeclaration<'de>) -> Self::Output {
+            fn visit_class_declaration(&mut self, decl: &ClassDeclaration<'de>, _ctx: &mut VisitContext<'ast, 'de>) -> () {
                 // Add the class name to local variables
                 self.local_vars
                     .insert(decl.inner.id.inner.name.as_ref().to_string());
@@ -1408,18 +1413,15 @@ impl<'de> Evaluator<'de> {
 
             fn visit_print_statement(
                 &mut self,
-                print_statement: &'ast Statement<'de>,
-            ) -> Self::Output {
+                print_statement: &'ast PrintStatement<'de>,
+                ctx: &mut VisitContext<'ast, 'de>,
+            ) -> () {
                 // @XXX: print will cause side effect, so we pretend it is a global function
                 // so the function will not be regarded as a pure function and not get cached incorrectly
                 self.binding_env
                     .insert("print".to_string(), self.vm.global.clone());
 
-                let StatementInner::Print(expr) = &**print_statement else {
-                    unreachable!("this must be a print statement")
-                };
-
-                self.visit_expression(expr)
+                self.visit_expression(&print_statement.expression, ctx)
             }
         }
 
@@ -1437,7 +1439,8 @@ impl<'de> Evaluator<'de> {
         };
 
         // Visit the function body to collect closure binding environment
-        visitor.visit_block_statement(&func_decl.inner.body);
+        let mut ctx = VisitContext::new();
+        visitor.visit_block_statement(&func_decl.inner.body, &mut ctx);
 
         binding_env
     }

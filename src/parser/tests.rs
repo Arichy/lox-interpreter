@@ -188,7 +188,7 @@ fn parse_class() {
 
         let mut parser = Parser::new(code);
         let tts = parser.parse().unwrap();
-        let tt = tts.get(0).unwrap();
+        let tt = tts.inner.body.get(0).unwrap();
         assert_eq!(tt.to_string(), "(class Spaceship)");
     }
 
@@ -203,7 +203,7 @@ fn parse_class() {
 
         let mut parser = Parser::new(code);
         let tts = parser.parse().unwrap();
-        let tt = tts.get(0).unwrap();
+        let tt = tts.inner.body.get(0).unwrap();
         assert_eq!(tt.to_string(), "(class Robot method beep)");
     }
 }
@@ -215,7 +215,7 @@ fn test_call_expr() {
 
         let mut parser = Parser::new(code);
         let tts = parser.parse().unwrap();
-        let tt = tts.get(0).unwrap();
+        let tt = tts.inner.body.get(0).unwrap();
         println!("{tt:#?}");
     }
 }
