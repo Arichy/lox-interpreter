@@ -292,8 +292,8 @@ pub trait Visitor<'ast, 'de, T: Default = ()> {
 
     fn visit_identifier(
         &mut self,
-        _ident: &'ast Identifier<'de>,
-        _ctx: &mut VisitContext<'ast, 'de>,
+        ident: &'ast Identifier<'de>,
+        ctx: &mut VisitContext<'ast, 'de>,
     ) -> T {
         // Default is to do nothing for leaf nodes
         Default::default()
@@ -301,16 +301,16 @@ pub trait Visitor<'ast, 'de, T: Default = ()> {
 
     fn visit_literal(
         &mut self,
-        _literal: &'ast Literal<'de>,
-        _ctx: &mut VisitContext<'ast, 'de>,
+        literal: &'ast Literal<'de>,
+        ctx: &mut VisitContext<'ast, 'de>,
     ) -> T {
         Default::default()
     }
 
     fn visit_this_expression(
         &mut self,
-        _this: &'ast ThisExpression,
-        _ctx: &mut VisitContext<'ast, 'de>,
+        this: &'ast ThisExpression,
+        ctx: &mut VisitContext<'ast, 'de>,
     ) -> T {
         Default::default()
     }
@@ -971,7 +971,7 @@ mod tests {
             fn visit_identifier(
                 &mut self,
                 identifier: &'ast Identifier<'de>,
-                _ctx: &mut VisitContext<'ast, 'de>,
+                ctx: &mut VisitContext<'ast, 'de>,
             ) {
                 self.visited_identifiers
                     .push(identifier.inner.name.to_string());
