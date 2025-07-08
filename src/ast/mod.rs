@@ -28,7 +28,7 @@ pub struct StringLiteralInner<'de>(pub Cow<'de, str>);
 pub type StringLiteral<'de> = Spanned<StringLiteralInner<'de>>;
 impl fmt::Display for StringLiteral<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "\"{}\"", self.inner.0)
+        write!(f, "{}", self.inner.0)
     }
 }
 
@@ -38,7 +38,11 @@ pub struct NumberLiteralInner(pub f64);
 pub type NumberLiteral = Spanned<NumberLiteralInner>;
 impl fmt::Display for NumberLiteral {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.inner.0)
+        if self.inner.0.trunc() == self.inner.0 {
+            write!(f, "{}.0", self.inner.0)
+        } else {
+            write!(f, "{}", self.inner.0)
+        }
     }
 }
 
