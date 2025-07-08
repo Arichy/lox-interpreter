@@ -220,17 +220,60 @@ fn test_call_expr() {
     }
 }
 
-// #[test]
-// fn test_invalid_this() {
-//     {
-//         let code = r#"
-//             fun notAMethod() {
-//               print this;
-//             }
-//         "#;
+#[test]
+fn test_invalid_this() {
+    {
+        let code = r#"
+            fun notAMethod() {
+              print this;
+            }
+        "#;
 
-//         let mut parser = Parser::new(code);
-//         let res = parser.parse();
-//         assert!(res.is_err());
-//     }
-// }
+        let mut parser = Parser::new(code);
+        let res = parser.parse();
+        assert!(res.is_err());
+    }
+
+    {
+        let code = r#"
+            class Person {
+            sayName() {
+                print this();
+            }
+            }
+            Person().sayName();
+        "#;
+
+        let mut parser = Parser::new(code);
+        let res = parser.parse();
+
+        println!("{res:?}");
+
+        assert!(res.is_err());
+    }
+
+    // {
+    //     let code = r#"
+    //         class Confused {
+    //             method() {
+    //                 fun inner(instance) {
+    //                 var feeling = "confused";
+    //                 print this.feeling;
+    //                 }
+    //                 return inner;
+    //             }
+    //         }
+
+    //         var instance = Confused();
+    //         var m = instance.method();
+    //         m(instance);
+    //     "#;
+
+    //     let mut parser = Parser::new(code);
+    //     let res = parser.parse();
+
+    //     println!("{res:?}");
+
+    //     assert!(res.is_err());
+    // }
+}

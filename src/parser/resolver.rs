@@ -3,7 +3,10 @@ use std::borrow::Cow;
 use miette::Error;
 
 use crate::{
-    ast::{Expression, Identifier, Program, ScopeType, VariableDeclaration, VisitContext, Visitor},
+    ast::{
+        ClassDeclaration, Expression, ExpressionInner, Identifier, Node, Program, ScopeType,
+        VariableDeclaration, VisitContext, Visitor,
+    },
     error,
 };
 
@@ -153,6 +156,42 @@ impl<'ast, 'de> Visitor<'ast, 'de> for Resolver<'de> {
             src: self.whole.to_string(),
             message: "return statement is not allowed outside of a function".to_string(),
             err_span: (return_stmt.range.0..return_stmt.range.1).into(),
+        }
+        .into())
+    }
+
+    fn visit_call_expression(
+        &mut self,
+        call: &'ast crate::ast::CallExpression<'de>,
+        ctx: &mut VisitContext<'ast, 'de>,
+    ) -> Result<Self::Output, Self::Error> {
+        if matches!(call.callee.inner, ExpressionInner::This(_)) {
+            return Err(error::SyntaxError {
+                src: self.whole.to_string(),
+                message: "this keyword is not allowed in a function call".to_string(),
+                err_span: (call.range.0..call.range.1).into(),
+            }
+            .into());
+        }
+
+        self.walk_call_expression(call, ctx)
+    }
+
+    fn visit_this_expression(
+        &mut self,
+        this: &'ast crate::ast::ThisExpression,
+        ctx: &mut VisitContext<'ast, 'de>,
+    ) -> Result<Self::Output, Self::Error> {
+        for ancestor in ctx.ancestors.iter().rev() {
+            if let &Node::ClassDeclaration(_) = ancestor {
+                return Ok(());
+            }
+        }
+
+        Err(error::SyntaxError {
+            src: self.whole.to_string(),
+            message: "this keyword is not allowed outside of a class".to_string(),
+            err_span: (this.range.0..this.range.1).into(),
         }
         .into())
     }
