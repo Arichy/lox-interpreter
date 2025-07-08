@@ -1,5 +1,5 @@
 pub use super::*;
-use rustc_hash::FxHashSet;
+use rustc_hash::FxHashMap as HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 // ================== Node Definition ==================
@@ -14,6 +14,7 @@ pub enum Node<'ast, 'de> {
     FunctionDeclaration(&'ast FunctionDeclaration<'de>),
     ClassDeclaration(&'ast ClassDeclaration<'de>),
     PrintStatement(&'ast PrintStatement<'de>),
+    ReturnStatement(&'ast ReturnStatement<'de>),
     Identifier(&'ast Identifier<'de>),
     Literal(&'ast Literal<'de>),
     UnaryExpression(&'ast UnaryExpression<'de>),
@@ -44,22 +45,23 @@ impl ScopeId {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ScopeType {
     Global,
+    Module,
     Function,
     Block,
 }
 
 #[derive(Debug, Clone)]
-pub struct Scope {
+pub struct Scope<'de> {
     pub id: ScopeId,
     pub scope_type: ScopeType,
-    pub variables: FxHashSet<String>,
+    pub variables: HashMap<Cow<'de, str>, (usize, usize)>,
 }
 
 #[derive(Debug)]
 pub struct VisitContext<'ast, 'de> {
     pub parent: Option<Node<'ast, 'de>>,
     pub ancestors: Vec<Node<'ast, 'de>>,
-    pub scope_stack: Vec<Scope>,
+    pub scope_stack: Vec<Scope<'de>>,
     pub current_scope_id: ScopeId,
 }
 
@@ -68,7 +70,7 @@ impl<'ast, 'de> VisitContext<'ast, 'de> {
         let global_scope = Scope {
             id: ScopeId::new(),
             scope_type: ScopeType::Global,
-            variables: FxHashSet::default(),
+            variables: HashMap::default(),
         };
         let global_scope_id = global_scope.id;
         Self {
@@ -83,7 +85,7 @@ impl<'ast, 'de> VisitContext<'ast, 'de> {
         let scope = Scope {
             id: ScopeId::new(),
             scope_type,
-            variables: FxHashSet::default(),
+            variables: HashMap::default(),
         };
         let scope_id = scope.id;
         self.scope_stack.push(scope);
@@ -96,19 +98,28 @@ impl<'ast, 'de> VisitContext<'ast, 'de> {
         self.current_scope_id = self.scope_stack.last().map_or(ScopeId::default(), |s| s.id);
     }
 
-    pub fn declare_variable(&mut self, name: &str) {
+    pub fn declare_variable(&mut self, name: Cow<'de, str>, range: (usize, usize)) {
         if let Some(scope) = self.scope_stack.last_mut() {
-            scope.variables.insert(name.to_string());
+            scope.variables.insert(name, range);
         }
     }
 
-    pub fn is_variable_declared(&self, name: &str) -> bool {
+    pub fn is_variable_declared(&self, name: &Cow<'de, str>) -> bool {
         for scope in self.scope_stack.iter().rev() {
-            if scope.variables.contains(name) {
+            if scope.variables.contains_key(name) {
                 return true;
             }
         }
         false
+    }
+
+    pub fn is_variable_declared_in_current_scope(
+        &self,
+        name: &Cow<'de, str>,
+    ) -> Option<(usize, usize)> {
+        let current_scope = self.scope_stack.last()?;
+
+        current_scope.variables.get(name).copied()
     }
 
     pub fn push_node(&mut self, node: Node<'ast, 'de>) {
@@ -145,12 +156,15 @@ impl<'ast, 'de> Default for VisitContext<'ast, 'de> {
 
 // ================== Visitor Trait Definition ==================
 
-pub trait Visitor<'ast, 'de, T: Default = ()> {
+pub trait Visitor<'ast, 'de> {
+    type Output: Default;
+    type Error;
+
     fn visit_program(
         &mut self,
         program: &'ast Program<'de>,
         ctx: &mut VisitContext<'ast, 'de>,
-    ) -> T {
+    ) -> Result<Self::Output, Self::Error> {
         self.walk_program(program, ctx)
     }
 
@@ -158,7 +172,7 @@ pub trait Visitor<'ast, 'de, T: Default = ()> {
         &mut self,
         stmt: &'ast Statement<'de>,
         ctx: &mut VisitContext<'ast, 'de>,
-    ) -> T {
+    ) -> Result<Self::Output, Self::Error> {
         self.walk_statement(stmt, ctx)
     }
 
@@ -166,7 +180,7 @@ pub trait Visitor<'ast, 'de, T: Default = ()> {
         &mut self,
         expr: &'ast Expression<'de>,
         ctx: &mut VisitContext<'ast, 'de>,
-    ) -> T {
+    ) -> Result<Self::Output, Self::Error> {
         self.walk_expression(expr, ctx)
     }
 
@@ -174,7 +188,7 @@ pub trait Visitor<'ast, 'de, T: Default = ()> {
         &mut self,
         decl: &'ast Declaration<'de>,
         ctx: &mut VisitContext<'ast, 'de>,
-    ) -> T {
+    ) -> Result<Self::Output, Self::Error> {
         self.walk_declaration(decl, ctx)
     }
 
@@ -182,7 +196,7 @@ pub trait Visitor<'ast, 'de, T: Default = ()> {
         &mut self,
         decl: &'ast VariableDeclaration<'de>,
         ctx: &mut VisitContext<'ast, 'de>,
-    ) -> T {
+    ) -> Result<Self::Output, Self::Error> {
         self.walk_variable_declaration(decl, ctx)
     }
 
@@ -190,7 +204,7 @@ pub trait Visitor<'ast, 'de, T: Default = ()> {
         &mut self,
         decl: &'ast FunctionDeclaration<'de>,
         ctx: &mut VisitContext<'ast, 'de>,
-    ) -> T {
+    ) -> Result<Self::Output, Self::Error> {
         self.walk_function_declaration(decl, ctx)
     }
 
@@ -198,7 +212,7 @@ pub trait Visitor<'ast, 'de, T: Default = ()> {
         &mut self,
         decl: &'ast ClassDeclaration<'de>,
         ctx: &mut VisitContext<'ast, 'de>,
-    ) -> T {
+    ) -> Result<Self::Output, Self::Error> {
         self.walk_class_declaration(decl, ctx)
     }
 
@@ -206,15 +220,23 @@ pub trait Visitor<'ast, 'de, T: Default = ()> {
         &mut self,
         print_stmt: &'ast PrintStatement<'de>,
         ctx: &mut VisitContext<'ast, 'de>,
-    ) -> T {
+    ) -> Result<Self::Output, Self::Error> {
         self.walk_print_statement(print_stmt, ctx)
+    }
+
+    fn visit_return_statement(
+        &mut self,
+        return_stmt: &'ast ReturnStatement<'de>,
+        ctx: &mut VisitContext<'ast, 'de>,
+    ) -> Result<Self::Output, Self::Error> {
+        self.walk_return_statement(return_stmt, ctx)
     }
 
     fn visit_block_statement(
         &mut self,
         block: &'ast BlockStatement<'de>,
         ctx: &mut VisitContext<'ast, 'de>,
-    ) -> T {
+    ) -> Result<Self::Output, Self::Error> {
         self.walk_block_statement(block, ctx)
     }
 
@@ -222,7 +244,7 @@ pub trait Visitor<'ast, 'de, T: Default = ()> {
         &mut self,
         if_stmt: &'ast IfStatement<'de>,
         ctx: &mut VisitContext<'ast, 'de>,
-    ) -> T {
+    ) -> Result<Self::Output, Self::Error> {
         self.walk_if_statement(if_stmt, ctx)
     }
 
@@ -230,7 +252,7 @@ pub trait Visitor<'ast, 'de, T: Default = ()> {
         &mut self,
         while_stmt: &'ast WhileStatement<'de>,
         ctx: &mut VisitContext<'ast, 'de>,
-    ) -> T {
+    ) -> Result<Self::Output, Self::Error> {
         self.walk_while_statement(while_stmt, ctx)
     }
 
@@ -238,7 +260,7 @@ pub trait Visitor<'ast, 'de, T: Default = ()> {
         &mut self,
         for_stmt: &'ast ForStatement<'de>,
         ctx: &mut VisitContext<'ast, 'de>,
-    ) -> T {
+    ) -> Result<Self::Output, Self::Error> {
         self.walk_for_statement(for_stmt, ctx)
     }
 
@@ -246,7 +268,7 @@ pub trait Visitor<'ast, 'de, T: Default = ()> {
         &mut self,
         unary: &'ast UnaryExpression<'de>,
         ctx: &mut VisitContext<'ast, 'de>,
-    ) -> T {
+    ) -> Result<Self::Output, Self::Error> {
         self.walk_unary_expression(unary, ctx)
     }
 
@@ -254,7 +276,7 @@ pub trait Visitor<'ast, 'de, T: Default = ()> {
         &mut self,
         binary: &'ast BinaryExpression<'de>,
         ctx: &mut VisitContext<'ast, 'de>,
-    ) -> T {
+    ) -> Result<Self::Output, Self::Error> {
         self.walk_binary_expression(binary, ctx)
     }
 
@@ -262,7 +284,7 @@ pub trait Visitor<'ast, 'de, T: Default = ()> {
         &mut self,
         group: &'ast GroupExpression<'de>,
         ctx: &mut VisitContext<'ast, 'de>,
-    ) -> T {
+    ) -> Result<Self::Output, Self::Error> {
         self.walk_group_expression(group, ctx)
     }
 
@@ -270,7 +292,7 @@ pub trait Visitor<'ast, 'de, T: Default = ()> {
         &mut self,
         assign: &'ast AssignmentExpression<'de>,
         ctx: &mut VisitContext<'ast, 'de>,
-    ) -> T {
+    ) -> Result<Self::Output, Self::Error> {
         self.walk_assignment_expression(assign, ctx)
     }
 
@@ -278,7 +300,7 @@ pub trait Visitor<'ast, 'de, T: Default = ()> {
         &mut self,
         call: &'ast CallExpression<'de>,
         ctx: &mut VisitContext<'ast, 'de>,
-    ) -> T {
+    ) -> Result<Self::Output, Self::Error> {
         self.walk_call_expression(call, ctx)
     }
 
@@ -286,33 +308,33 @@ pub trait Visitor<'ast, 'de, T: Default = ()> {
         &mut self,
         member: &'ast MemberExpression<'de>,
         ctx: &mut VisitContext<'ast, 'de>,
-    ) -> T {
+    ) -> Result<Self::Output, Self::Error> {
         self.walk_member_expression(member, ctx)
     }
 
     fn visit_identifier(
         &mut self,
-        ident: &'ast Identifier<'de>,
-        ctx: &mut VisitContext<'ast, 'de>,
-    ) -> T {
+        _ident: &'ast Identifier<'de>,
+        _ctx: &mut VisitContext<'ast, 'de>,
+    ) -> Result<Self::Output, Self::Error> {
         // Default is to do nothing for leaf nodes
-        Default::default()
+        Ok(Default::default())
     }
 
     fn visit_literal(
         &mut self,
-        literal: &'ast Literal<'de>,
-        ctx: &mut VisitContext<'ast, 'de>,
-    ) -> T {
-        Default::default()
+        _literal: &'ast Literal<'de>,
+        _ctx: &mut VisitContext<'ast, 'de>,
+    ) -> Result<Self::Output, Self::Error> {
+        Ok(Default::default())
     }
 
     fn visit_this_expression(
         &mut self,
-        this: &'ast ThisExpression,
-        ctx: &mut VisitContext<'ast, 'de>,
-    ) -> T {
-        Default::default()
+        _this: &'ast ThisExpression,
+        _ctx: &mut VisitContext<'ast, 'de>,
+    ) -> Result<Self::Output, Self::Error> {
+        Ok(Default::default())
     }
 
     // Default walk implementations
@@ -320,167 +342,165 @@ pub trait Visitor<'ast, 'de, T: Default = ()> {
         &mut self,
         program: &'ast Program<'de>,
         ctx: &mut VisitContext<'ast, 'de>,
-    ) -> T {
+    ) -> Result<Self::Output, Self::Error> {
         ctx.push_node(Node::Program(program));
         for stmt in &program.inner.body {
-            self.visit_statement(stmt, ctx);
+            self.visit_statement(stmt, ctx)?;
         }
         ctx.pop_node();
-        Default::default()
+        Ok(Default::default())
     }
 
     fn walk_statement(
         &mut self,
         stmt: &'ast Statement<'de>,
         ctx: &mut VisitContext<'ast, 'de>,
-    ) -> T {
+    ) -> Result<Self::Output, Self::Error> {
         ctx.push_node(Node::Statement(stmt));
         match &stmt.inner {
             StatementInner::Expression(expr) => {
-                self.visit_expression(expr, ctx);
+                self.visit_expression(expr, ctx)?;
             }
             StatementInner::Print(print_stmt) => {
-                self.visit_print_statement(print_stmt, ctx);
+                self.visit_print_statement(print_stmt, ctx)?;
             }
             StatementInner::Declaration(decl) => {
-                self.visit_declaration(decl, ctx);
+                self.visit_declaration(decl, ctx)?;
             }
             StatementInner::Block(block) => {
                 ctx.push_scope(ScopeType::Block);
-                self.visit_block_statement(block, ctx);
+                self.visit_block_statement(block, ctx)?;
                 ctx.pop_scope();
             }
             StatementInner::If(if_stmt) => {
-                self.visit_if_statement(if_stmt, ctx);
+                self.visit_if_statement(if_stmt, ctx)?;
             }
-            StatementInner::Return(ret_expr) => {
-                if let Some(expr) = ret_expr {
-                    self.visit_expression(expr, ctx);
-                }
+            StatementInner::Return(ret_stmt) => {
+                self.visit_return_statement(ret_stmt, ctx)?;
             }
             StatementInner::While(while_stmt) => {
-                self.visit_while_statement(while_stmt, ctx);
+                self.visit_while_statement(while_stmt, ctx)?;
             }
             StatementInner::For(for_stmt) => {
-                self.visit_for_statement(for_stmt, ctx);
+                self.visit_for_statement(for_stmt, ctx)?;
             }
             StatementInner::Break | StatementInner::Continue => {}
         }
         ctx.pop_node();
-        Default::default()
+        Ok(Default::default())
     }
 
     fn walk_expression(
         &mut self,
         expr: &'ast Expression<'de>,
         ctx: &mut VisitContext<'ast, 'de>,
-    ) -> T {
+    ) -> Result<Self::Output, Self::Error> {
         match &expr.inner {
             ExpressionInner::Identifier(ident) => {
-                self.visit_identifier(ident, ctx);
+                self.visit_identifier(ident, ctx)?;
             }
             ExpressionInner::Literal(literal) => {
-                self.visit_literal(literal, ctx);
+                self.visit_literal(literal, ctx)?;
             }
             ExpressionInner::Unary(unary) => {
-                self.visit_unary_expression(unary, ctx);
+                self.visit_unary_expression(unary, ctx)?;
             }
             ExpressionInner::Binary(binary) => {
-                self.visit_binary_expression(binary, ctx);
+                self.visit_binary_expression(binary, ctx)?;
             }
             ExpressionInner::Group(group) => {
-                self.visit_group_expression(group, ctx);
+                self.visit_group_expression(group, ctx)?;
             }
             ExpressionInner::Assignment(assign) => {
-                self.visit_assignment_expression(assign, ctx);
+                self.visit_assignment_expression(assign, ctx)?;
             }
             ExpressionInner::Call(call) => {
-                self.visit_call_expression(call, ctx);
+                self.visit_call_expression(call, ctx)?;
             }
             ExpressionInner::Member(member) => {
-                self.visit_member_expression(member, ctx);
+                self.visit_member_expression(member, ctx)?;
             }
             ExpressionInner::This(this) => {
-                self.visit_this_expression(this, ctx);
+                self.visit_this_expression(this, ctx)?;
             }
         }
-        Default::default()
+        Ok(Default::default())
     }
 
     fn walk_declaration(
         &mut self,
         decl: &'ast Declaration<'de>,
         ctx: &mut VisitContext<'ast, 'de>,
-    ) -> T {
+    ) -> Result<Self::Output, Self::Error> {
         ctx.push_node(Node::Declaration(decl));
         match &decl.inner {
             DeclarationInner::Variable(var_decl) => {
-                self.visit_variable_declaration(var_decl, ctx);
+                self.visit_variable_declaration(var_decl, ctx)?;
             }
             DeclarationInner::Function(fn_decl) => {
-                self.visit_function_declaration(fn_decl, ctx);
+                self.visit_function_declaration(fn_decl, ctx)?;
             }
             DeclarationInner::Class(class_decl) => {
-                self.visit_class_declaration(class_decl, ctx);
+                self.visit_class_declaration(class_decl, ctx)?;
             }
         }
         ctx.pop_node();
-        Default::default()
+        Ok(Default::default())
     }
 
     fn walk_variable_declaration(
         &mut self,
         decl: &'ast VariableDeclaration<'de>,
         ctx: &mut VisitContext<'ast, 'de>,
-    ) -> T {
+    ) -> Result<Self::Output, Self::Error> {
         ctx.push_node(Node::VariableDeclaration(decl));
-        ctx.declare_variable(&decl.inner.id.inner.name);
-        self.visit_identifier(&decl.inner.id, ctx);
+        ctx.declare_variable(decl.inner.id.inner.name.clone(), decl.range);
+        self.visit_identifier(&decl.inner.id, ctx)?;
         if let Some(init) = &decl.inner.init {
-            self.visit_expression(init, ctx);
+            self.visit_expression(init, ctx)?;
         }
         ctx.pop_node();
-        Default::default()
+        Ok(Default::default())
     }
 
     fn walk_function_declaration(
         &mut self,
         decl: &'ast FunctionDeclaration<'de>,
         ctx: &mut VisitContext<'ast, 'de>,
-    ) -> T {
+    ) -> Result<Self::Output, Self::Error> {
         ctx.push_node(Node::FunctionDeclaration(decl));
-        ctx.declare_variable(&decl.inner.name.inner.name);
-        self.visit_identifier(&decl.inner.name, ctx);
+        ctx.declare_variable(decl.inner.name.inner.name.clone(), decl.range);
+        self.visit_identifier(&decl.inner.name, ctx)?;
 
         ctx.push_scope(ScopeType::Function);
         for param in &decl.inner.parameters {
-            ctx.declare_variable(&param.inner.name);
-            self.visit_identifier(param, ctx);
+            ctx.declare_variable(param.inner.name.clone(), param.range);
+            self.visit_identifier(param, ctx)?;
         }
-        self.visit_block_statement(&decl.inner.body, ctx);
+        self.visit_block_statement(&decl.inner.body, ctx)?;
         ctx.pop_scope();
 
         ctx.pop_node();
-        Default::default()
+        Ok(Default::default())
     }
 
     fn walk_class_declaration(
         &mut self,
         decl: &'ast ClassDeclaration<'de>,
         ctx: &mut VisitContext<'ast, 'de>,
-    ) -> T {
+    ) -> Result<Self::Output, Self::Error> {
         ctx.push_node(Node::ClassDeclaration(decl));
-        ctx.declare_variable(&decl.inner.id.inner.name);
-        self.visit_identifier(&decl.inner.id, ctx);
+        ctx.declare_variable(decl.inner.id.inner.name.clone(), decl.range);
+        self.visit_identifier(&decl.inner.id, ctx)?;
 
         if let Some(superclass) = &decl.inner.superclass {
-            self.visit_identifier(superclass, ctx);
+            self.visit_identifier(superclass, ctx)?;
         }
 
         for item in &decl.inner.body.inner.0 {
             match &item.inner {
                 ClassBodyItemInner::ClassMethod(method_decl) => {
-                    self.visit_function_declaration(method_decl, ctx);
+                    self.visit_function_declaration(method_decl, ctx)?;
                 }
                 ClassBodyItemInner::ClassProperty() => {
                     // Handle class properties if they contain identifiers
@@ -489,183 +509,199 @@ pub trait Visitor<'ast, 'de, T: Default = ()> {
         }
 
         ctx.pop_node();
-        Default::default()
+        Ok(Default::default())
     }
 
     fn walk_print_statement(
         &mut self,
         print_stmt: &'ast PrintStatement<'de>,
         ctx: &mut VisitContext<'ast, 'de>,
-    ) -> T {
+    ) -> Result<Self::Output, Self::Error> {
         ctx.push_node(Node::PrintStatement(print_stmt));
-        self.visit_expression(&print_stmt.inner.expression, ctx);
+        self.visit_expression(&print_stmt.inner.expression, ctx)?;
         ctx.pop_node();
-        Default::default()
+        Ok(Default::default())
+    }
+
+    fn walk_return_statement(
+        &mut self,
+        return_stmt: &'ast ReturnStatement<'de>,
+        ctx: &mut VisitContext<'ast, 'de>,
+    ) -> Result<Self::Output, Self::Error> {
+        ctx.push_node(Node::ReturnStatement(return_stmt));
+        if let Some(expr) = &return_stmt.inner.expression {
+            self.visit_expression(expr, ctx)?;
+        }
+        ctx.pop_node();
+        Ok(Default::default())
     }
 
     fn walk_block_statement(
         &mut self,
         block: &'ast BlockStatement<'de>,
         ctx: &mut VisitContext<'ast, 'de>,
-    ) -> T {
+    ) -> Result<Self::Output, Self::Error> {
         ctx.push_node(Node::BlockStatement(block));
         for stmt in &block.inner.statements {
-            self.visit_statement(stmt, ctx);
+            self.visit_statement(stmt, ctx)?;
         }
         ctx.pop_node();
-        Default::default()
+        Ok(Default::default())
     }
 
     fn walk_if_statement(
         &mut self,
         if_stmt: &'ast IfStatement<'de>,
         ctx: &mut VisitContext<'ast, 'de>,
-    ) -> T {
+    ) -> Result<Self::Output, Self::Error> {
         ctx.push_node(Node::IfStatement(if_stmt));
-        self.visit_expression(&if_stmt.inner.test, ctx);
-        self.visit_statement(&if_stmt.inner.consequent, ctx);
+        self.visit_expression(&if_stmt.inner.test, ctx)?;
+        self.visit_statement(&if_stmt.inner.consequent, ctx)?;
         if let Some(alternate) = &if_stmt.inner.alternate {
-            self.visit_statement(alternate, ctx);
+            self.visit_statement(alternate, ctx)?;
         }
         ctx.pop_node();
-        Default::default()
+        Ok(Default::default())
     }
 
     fn walk_while_statement(
         &mut self,
         while_stmt: &'ast WhileStatement<'de>,
         ctx: &mut VisitContext<'ast, 'de>,
-    ) -> T {
+    ) -> Result<Self::Output, Self::Error> {
         ctx.push_node(Node::WhileStatement(while_stmt));
-        self.visit_expression(&while_stmt.inner.test, ctx);
-        self.visit_statement(&while_stmt.inner.body, ctx);
+        self.visit_expression(&while_stmt.inner.test, ctx)?;
+        self.visit_statement(&while_stmt.inner.body, ctx)?;
         ctx.pop_node();
-        Default::default()
+        Ok(Default::default())
     }
 
     fn walk_for_statement(
         &mut self,
         for_stmt: &'ast ForStatement<'de>,
         ctx: &mut VisitContext<'ast, 'de>,
-    ) -> T {
+    ) -> Result<Self::Output, Self::Error> {
         ctx.push_node(Node::ForStatement(for_stmt));
         ctx.push_scope(ScopeType::Block);
 
         if let Some(init) = &for_stmt.inner.init {
             match &init.inner {
                 ForInitInner::VariableDeclaration(decl) => {
-                    self.visit_variable_declaration(decl, ctx);
+                    self.visit_variable_declaration(decl, ctx)?;
                 }
                 ForInitInner::Expression(expr) => {
-                    self.visit_expression(expr, ctx);
+                    self.visit_expression(expr, ctx)?;
                 }
             }
         }
         if let Some(test) = &for_stmt.inner.test {
-            self.visit_expression(test, ctx);
+            self.visit_expression(test, ctx)?;
         }
         if let Some(update) = &for_stmt.inner.update {
-            self.visit_expression(update, ctx);
+            self.visit_expression(update, ctx)?;
         }
-        self.visit_statement(&for_stmt.inner.body, ctx);
+        self.visit_statement(&for_stmt.inner.body, ctx)?;
 
         ctx.pop_scope();
         ctx.pop_node();
-        Default::default()
+        Ok(Default::default())
     }
 
     fn walk_unary_expression(
         &mut self,
         unary: &'ast UnaryExpression<'de>,
         ctx: &mut VisitContext<'ast, 'de>,
-    ) -> T {
+    ) -> Result<Self::Output, Self::Error> {
         ctx.push_node(Node::UnaryExpression(unary));
-        self.visit_expression(&unary.inner.right, ctx);
+        self.visit_expression(&unary.inner.right, ctx)?;
         ctx.pop_node();
-        Default::default()
+        Ok(Default::default())
     }
 
     fn walk_binary_expression(
         &mut self,
         binary: &'ast BinaryExpression<'de>,
         ctx: &mut VisitContext<'ast, 'de>,
-    ) -> T {
+    ) -> Result<Self::Output, Self::Error> {
         ctx.push_node(Node::BinaryExpression(binary));
-        self.visit_expression(&binary.inner.left, ctx);
-        self.visit_expression(&binary.inner.right, ctx);
+        self.visit_expression(&binary.inner.left, ctx)?;
+        self.visit_expression(&binary.inner.right, ctx)?;
         ctx.pop_node();
-        Default::default()
+        Ok(Default::default())
     }
 
     fn walk_group_expression(
         &mut self,
         group: &'ast GroupExpression<'de>,
         ctx: &mut VisitContext<'ast, 'de>,
-    ) -> T {
+    ) -> Result<Self::Output, Self::Error> {
         ctx.push_node(Node::GroupExpression(group));
-        self.visit_expression(&group.inner.expression, ctx);
+        self.visit_expression(&group.inner.expression, ctx)?;
         ctx.pop_node();
-        Default::default()
+        Ok(Default::default())
     }
 
     fn walk_assignment_expression(
         &mut self,
         assign: &'ast AssignmentExpression<'de>,
         ctx: &mut VisitContext<'ast, 'de>,
-    ) -> T {
+    ) -> Result<Self::Output, Self::Error> {
         ctx.push_node(Node::AssignmentExpression(assign));
-        self.visit_identifier(&assign.inner.left, ctx);
-        self.visit_expression(&assign.inner.right, ctx);
+        self.visit_identifier(&assign.inner.left, ctx)?;
+        self.visit_expression(&assign.inner.right, ctx)?;
         ctx.pop_node();
-        Default::default()
+        Ok(Default::default())
     }
 
     fn walk_call_expression(
         &mut self,
         call: &'ast CallExpression<'de>,
         ctx: &mut VisitContext<'ast, 'de>,
-    ) -> T {
+    ) -> Result<Self::Output, Self::Error> {
         ctx.push_node(Node::CallExpression(call));
-        self.visit_expression(&call.inner.callee, ctx);
+        self.visit_expression(&call.inner.callee, ctx)?;
         for arg in &call.inner.arguments {
-            self.visit_expression(arg, ctx);
+            self.visit_expression(arg, ctx)?;
         }
         ctx.pop_node();
-        Default::default()
+        Ok(Default::default())
     }
 
     fn walk_member_expression(
         &mut self,
         member: &'ast MemberExpression<'de>,
         ctx: &mut VisitContext<'ast, 'de>,
-    ) -> T {
+    ) -> Result<Self::Output, Self::Error> {
         ctx.push_node(Node::MemberExpression(member));
-        self.visit_expression(&member.inner.object, ctx);
-        self.visit_expression(&member.inner.property, ctx);
+        self.visit_expression(&member.inner.object, ctx)?;
+        self.visit_expression(&member.inner.property, ctx)?;
         ctx.pop_node();
-        Default::default()
+        Ok(Default::default())
     }
 }
 
 // Helper function to start traversal
-pub fn traverse<'ast, 'de, V: Visitor<'ast, 'de>>(program: &'ast Program<'de>, visitor: &mut V) {
+pub fn traverse<'ast, 'de, V: Visitor<'ast, 'de>>(
+    program: &'ast Program<'de>,
+    visitor: &mut V,
+) -> Result<V::Output, V::Error> {
     let mut context = VisitContext::new();
-    visitor.visit_program(program, &mut context);
+    visitor.visit_program(program, &mut context)
 }
 
 // ================== Example Visitor Implementations ==================
 
 /// Variable Analyzer - tracks variable declarations and usage
-pub struct VariableAnalyzer {
-    pub declared_variables: FxHashSet<String>,
-    pub used_variables: Vec<String>,
-    pub undeclared_variables: Vec<String>,
+pub struct VariableAnalyzer<'de> {
+    pub declared_variables: HashMap<Cow<'de, str>, ()>,
+    pub used_variables: Vec<Cow<'de, str>>,
+    pub undeclared_variables: Vec<Cow<'de, str>>,
 }
 
-impl VariableAnalyzer {
+impl<'de> VariableAnalyzer<'de> {
     pub fn new() -> Self {
         Self {
-            declared_variables: FxHashSet::default(),
+            declared_variables: HashMap::default(),
             used_variables: Vec::new(),
             undeclared_variables: Vec::new(),
         }
@@ -673,15 +709,24 @@ impl VariableAnalyzer {
 
     pub fn report(&self) -> String {
         let mut report = String::new();
-        report.push_str("=== Variable Analysis Report ===\n");
+        report.push_str(
+            "=== Variable Analysis Report ===
+",
+        );
         report.push_str(&format!(
-            "Declared Variables: {:?}\n",
+            "Declared Variables: {:?}
+",
             self.declared_variables
         ));
-        report.push_str(&format!("Used Variables: {:?}\n", self.used_variables));
+        report.push_str(&format!(
+            "Used Variables: {:?}
+",
+            self.used_variables
+        ));
         if !self.undeclared_variables.is_empty() {
             report.push_str(&format!(
-                "Undeclared Variables: {:?}\n",
+                "Undeclared Variables: {:?}
+",
                 self.undeclared_variables
             ));
         }
@@ -689,38 +734,44 @@ impl VariableAnalyzer {
     }
 }
 
-impl<'ast, 'de> Visitor<'ast, 'de> for VariableAnalyzer {
+impl<'ast, 'de> Visitor<'ast, 'de> for VariableAnalyzer<'de> {
+    type Output = ();
+    type Error = Error;
+
     fn visit_variable_declaration(
         &mut self,
         decl: &'ast VariableDeclaration<'de>,
         ctx: &mut VisitContext<'ast, 'de>,
-    ) {
+    ) -> Result<Self::Output, Self::Error> {
         self.declared_variables
-            .insert(decl.inner.id.inner.name.to_string());
-        self.walk_variable_declaration(decl, ctx)
+            .insert(decl.inner.id.inner.name.clone(), Default::default());
+        self.walk_variable_declaration(decl, ctx)?;
+        Ok(())
     }
 
     fn visit_function_declaration(
         &mut self,
         decl: &'ast FunctionDeclaration<'de>,
         ctx: &mut VisitContext<'ast, 'de>,
-    ) {
+    ) -> Result<Self::Output, Self::Error> {
         self.declared_variables
-            .insert(decl.inner.name.inner.name.to_string());
-        self.walk_function_declaration(decl, ctx)
+            .insert(decl.inner.name.inner.name.clone(), Default::default());
+        self.walk_function_declaration(decl, ctx)?;
+        Ok(())
     }
 
     fn visit_identifier(
         &mut self,
         ident: &'ast Identifier<'de>,
         ctx: &mut VisitContext<'ast, 'de>,
-    ) {
-        let name = ident.inner.name.to_string();
+    ) -> Result<Self::Output, Self::Error> {
+        let name = ident.inner.name.clone();
         self.used_variables.push(name.clone());
 
         if !ctx.is_variable_declared(&name) {
             self.undeclared_variables.push(name);
         }
+        Ok(())
     }
 }
 
@@ -742,11 +793,22 @@ impl FunctionCallCollector {
 
     pub fn report(&self) -> String {
         let mut report = String::new();
-        report.push_str("=== Function Call Analysis ===\n");
-        report.push_str(&format!("All function calls: {:?}\n", self.function_calls));
+        report.push_str(
+            "=== Function Call Analysis ===
+",
+        );
+        report.push_str(&format!(
+            "All function calls: {:?}
+",
+            self.function_calls
+        ));
 
         for (func, calls) in &self.calls_in_function {
-            report.push_str(&format!("In function '{}': {:?}\n", func, calls));
+            report.push_str(&format!(
+                "In function '{}': {:?}
+",
+                func, calls
+            ));
         }
 
         report
@@ -754,24 +816,28 @@ impl FunctionCallCollector {
 }
 
 impl<'ast, 'de> Visitor<'ast, 'de> for FunctionCallCollector {
+    type Output = ();
+    type Error = Error;
+
     fn visit_function_declaration(
         &mut self,
         decl: &'ast FunctionDeclaration<'de>,
         ctx: &mut VisitContext<'ast, 'de>,
-    ) {
+    ) -> Result<Self::Output, Self::Error> {
         let func_name = decl.inner.name.inner.name.to_string();
         let prev_function = self.current_function.replace(func_name.clone());
 
-        self.walk_function_declaration(decl, ctx);
+        self.walk_function_declaration(decl, ctx)?;
 
         self.current_function = prev_function;
+        Ok(())
     }
 
     fn visit_call_expression(
         &mut self,
         call: &'ast CallExpression<'de>,
         ctx: &mut VisitContext<'ast, 'de>,
-    ) {
+    ) -> Result<Self::Output, Self::Error> {
         if let ExpressionInner::Identifier(func_name) = &call.inner.callee.inner {
             let name = func_name.inner.name.to_string();
             self.function_calls.push(name.clone());
@@ -784,7 +850,8 @@ impl<'ast, 'de> Visitor<'ast, 'de> for FunctionCallCollector {
             }
         }
 
-        self.walk_call_expression(call, ctx)
+        self.walk_call_expression(call, ctx)?;
+        Ok(())
     }
 }
 
@@ -805,12 +872,14 @@ mod tests {
         let program = parser.parse().unwrap();
 
         let mut analyzer = VariableAnalyzer::new();
-        traverse(&program, &mut analyzer);
+        traverse(&program, &mut analyzer).unwrap();
 
-        assert!(analyzer.used_variables.contains(&"x".to_string()));
-        assert!(analyzer.used_variables.contains(&"z".to_string()));
-        assert!(analyzer.undeclared_variables.contains(&"z".to_string()));
-        assert!(!analyzer.undeclared_variables.contains(&"x".to_string()));
+        // assert!(analyzer.used_variables.contains("x"));
+        // assert!(analyzer.used_variables.contains(&"z".()));
+        // assert!(analyzer.undeclared_variables.contains(&"z".to_string()));
+        // assert!(!analyzer.undeclared_variables.contains(&"x".to_string()));
+        assert_eq!(analyzer.used_variables, ["x", "y", "x", "z"]); // @XXX: maybe incorrect
+        assert_eq!(analyzer.undeclared_variables, ["z"]);
     }
 
     #[test]
@@ -827,7 +896,7 @@ mod tests {
         let program = parser.parse().unwrap();
 
         let mut collector = FunctionCallCollector::new();
-        traverse(&program, &mut collector);
+        traverse(&program, &mut collector).unwrap();
 
         assert!(collector.function_calls.contains(&"multiply".to_string()));
         assert!(collector.function_calls.contains(&"add".to_string()));
@@ -853,16 +922,16 @@ mod tests {
         let program = parser.parse().unwrap();
 
         let mut analyzer = VariableAnalyzer::new();
-        traverse(&program, &mut analyzer);
+        traverse(&program, &mut analyzer).unwrap();
 
         // Should have multiple variables declared
         assert!(analyzer.declared_variables.len() > 1);
 
         // Check that variables are correctly declared
-        assert!(analyzer.declared_variables.contains("global"));
-        assert!(analyzer.declared_variables.contains("local"));
-        assert!(analyzer.declared_variables.contains("block"));
-        assert!(analyzer.declared_variables.contains("test"));
+        assert!(analyzer.declared_variables.contains_key("global"));
+        assert!(analyzer.declared_variables.contains_key("local"));
+        assert!(analyzer.declared_variables.contains_key("block"));
+        assert!(analyzer.declared_variables.contains_key("test"));
     }
 
     #[test]
@@ -881,11 +950,14 @@ mod tests {
         }
 
         impl<'ast, 'de> Visitor<'ast, 'de> for ContextTracker {
+            type Output = ();
+            type Error = Error;
+
             fn visit_identifier(
                 &mut self,
                 ident: &'ast Identifier<'de>,
                 ctx: &mut VisitContext<'ast, 'de>,
-            ) {
+            ) -> Result<Self::Output, Self::Error> {
                 if let Some(parent) = &ctx.parent {
                     let parent_desc = match parent {
                         Node::VariableDeclaration(_) => "VarDecl".to_string(),
@@ -897,6 +969,7 @@ mod tests {
                     self.identifier_parents
                         .push(format!("{}:{}", ident.inner.name, parent_desc));
                 }
+                Ok(())
             }
         }
 
@@ -911,7 +984,7 @@ mod tests {
         let program = parser.parse().unwrap();
 
         let mut tracker = ContextTracker::new();
-        traverse(&program, &mut tracker);
+        traverse(&program, &mut tracker).unwrap();
 
         // Verify some key parent-child relationships
         assert!(tracker
@@ -948,33 +1021,38 @@ mod tests {
         }
 
         impl<'ast, 'de> Visitor<'ast, 'de> for SelectiveTraverser {
+            type Output = ();
+            type Error = Error;
+
             fn visit_function_declaration(
                 &mut self,
                 decl: &'ast FunctionDeclaration<'de>,
                 ctx: &mut VisitContext<'ast, 'de>,
-            ) {
+            ) -> Result<Self::Output, Self::Error> {
                 let name = decl.inner.name.inner.name.to_string();
                 self.visited_functions.push(name);
 
                 if self.skip_function_bodies {
                     // Only visit function name and parameters, skip function body
-                    self.visit_identifier(&decl.inner.name, ctx);
+                    self.visit_identifier(&decl.inner.name, ctx)?;
                     for param in &decl.inner.parameters {
-                        self.visit_identifier(param, ctx);
+                        self.visit_identifier(param, ctx)?;
                     }
                 } else {
                     // Use walk to traverse the entire function
-                    self.walk_function_declaration(decl, ctx);
+                    self.walk_function_declaration(decl, ctx)?;
                 }
+                Ok(())
             }
 
             fn visit_identifier(
                 &mut self,
                 identifier: &'ast Identifier<'de>,
-                ctx: &mut VisitContext<'ast, 'de>,
-            ) {
+                _ctx: &mut VisitContext<'ast, 'de>,
+            ) -> Result<Self::Output, Self::Error> {
                 self.visited_identifiers
                     .push(identifier.inner.name.to_string());
+                Ok(())
             }
         }
 
@@ -994,7 +1072,7 @@ mod tests {
 
         // Test skipping function bodies
         let mut selective_traverser = SelectiveTraverser::new(true);
-        traverse(&program, &mut selective_traverser);
+        traverse(&program, &mut selective_traverser).unwrap();
 
         // When skipping function bodies, inner function declarations should not be visited
         assert_eq!(selective_traverser.visited_functions, vec!["outer"]);
@@ -1011,7 +1089,7 @@ mod tests {
 
         // Test full traversal
         let mut full_traverser = SelectiveTraverser::new(false);
-        traverse(&program, &mut full_traverser);
+        traverse(&program, &mut full_traverser).unwrap();
 
         // Full traversal should visit all functions
         assert_eq!(full_traverser.visited_functions, vec!["outer", "inner"]);
@@ -1048,25 +1126,30 @@ mod tests {
         }
 
         impl<'ast, 'de> Visitor<'ast, 'de> for ScopeDepthTracker {
+            type Output = ();
+            type Error = Error;
+
             fn visit_function_declaration(
                 &mut self,
                 decl: &'ast FunctionDeclaration<'de>,
                 ctx: &mut VisitContext<'ast, 'de>,
-            ) {
+            ) -> Result<Self::Output, Self::Error> {
                 let depth = ctx.scope_stack.len();
                 self.max_depth = self.max_depth.max(depth);
                 self.function_depths.push(depth);
-                self.walk_function_declaration(decl, ctx);
+                self.walk_function_declaration(decl, ctx)?;
+                Ok(())
             }
 
             fn visit_block_statement(
                 &mut self,
                 block: &'ast BlockStatement<'de>,
                 ctx: &mut VisitContext<'ast, 'de>,
-            ) {
+            ) -> Result<Self::Output, Self::Error> {
                 let depth = ctx.scope_stack.len();
                 self.max_depth = self.max_depth.max(depth);
-                self.walk_block_statement(block, ctx);
+                self.walk_block_statement(block, ctx)?;
+                Ok(())
             }
         }
 
@@ -1086,7 +1169,7 @@ mod tests {
         let program = parser.parse().unwrap();
 
         let mut tracker = ScopeDepthTracker::new();
-        traverse(&program, &mut tracker);
+        traverse(&program, &mut tracker).unwrap();
 
         // Verify maximum scope depth
         assert!(tracker.max_depth >= 3); // Global + Function + Block + Function + Block

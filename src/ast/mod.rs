@@ -4,7 +4,7 @@ use miette::Error;
 
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
-use crate::{error, lexer::Token, parser::ParserState, Parser};
+use crate::{error, lexer::Token, Parser};
 
 mod visitor;
 pub use visitor::*;
@@ -154,84 +154,8 @@ impl fmt::Display for VariableDeclaration<'_> {
         Ok(())
     }
 }
-impl<'de> VariableDeclaration<'de> {
-    pub fn validate<'p>(&self, parser: &'p Parser<'de>) -> Result<(), Error> {
-        // https://app.codecrafters.io/courses/interpreter/stages/pt7
-        if !parser.state().current_scope()?.is_enclosed() {
-            return Ok(());
-        }
 
-        // println!("here: {}", self.id);
-        // println!("{:?}", parser.state());
-
-        if let Some(range) = parser.state().current_scope()?.bindings.get(&self.id.name) {
-            return Err(error::RedeclarationError {
-                src: parser.whole().to_string(),
-                name: self.id.name.to_string(),
-                err_span: (self.range.0..self.range.1).into(),
-                existing_span: (range.0..range.1).into(),
-            }
-            .into());
-        }
-
-        struct ExprVisitor<'de> {
-            identifiers: HashSet<&'de str>,
-        }
-        impl<'ast, 'de> Visitor<'ast, 'de> for ExprVisitor<'de> where 'ast: 'de {
-            fn visit_identifier(&mut self, _identifier: &'ast Identifier<'de>, _ctx: &mut VisitContext<'ast, 'de>) {
-                self.identifiers.insert(&_identifier.name);
-            }
-        }
-
-        struct VariableDeclarationVisitor<'ast, 'p, 'de> {
-            id: &'ast Identifier<'de>,
-            parser: &'p Parser<'de>,
-        }
-        impl<'ast, 'p, 'de> Visitor<'ast, 'de, bool> for VariableDeclarationVisitor<'ast, 'p, 'de> where 'ast: 'de {
-            fn visit_variable_declaration(
-                &mut self,
-                decl: &'ast VariableDeclaration<'de>,
-                ctx: &mut VisitContext<'ast, 'de>,
-            ) -> bool {
-                if let Some(decl) = &decl.init {
-                    self.visit_expression(decl, ctx)
-                } else {
-                    true
-                }
-            }
-
-            fn visit_expression(&mut self, expr: &'ast Expression<'de>, ctx: &mut VisitContext<'ast, 'de>) -> bool {
-                let mut expr_visitor = ExprVisitor {
-                    identifiers: HashSet::default(),
-                };
-
-                expr_visitor.visit_expression(expr, ctx);
-
-                let res = !expr_visitor.identifiers.contains(self.id.name.as_ref());
-
-                res
-            }
-        }
-        let mut visitor = VariableDeclarationVisitor {
-            id: &self.id,
-            parser,
-        };
-
-        let mut ctx = VisitContext::new();
-        if visitor.visit_variable_declaration(self, &mut ctx) {
-            Ok(())
-        } else {
-            Err(error::SyntaxError {
-                src: parser.whole().to_string(),
-                message: "Can't read local variable in its own initializer.".to_string(),
-                err_span: (self.range.0..self.range.1).into(),
-            }
-            .into())
-        }
-    }
-}
-
-// Print Statement
+// print Statement
 #[derive(Debug, Clone, PartialEq)]
 pub struct PrintStatementInner<'de> {
     pub expression: Expression<'de>,
@@ -240,6 +164,22 @@ pub type PrintStatement<'de> = Spanned<PrintStatementInner<'de>>;
 impl fmt::Display for PrintStatement<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "(print {})", self.inner.expression)
+    }
+}
+
+// return Statement
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReturnStatementInner<'de> {
+    pub expression: Option<Expression<'de>>,
+}
+pub type ReturnStatement<'de> = Spanned<ReturnStatementInner<'de>>;
+impl fmt::Display for ReturnStatement<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(expr) = &self.inner.expression {
+            write!(f, "(return {})", expr)
+        } else {
+            write!(f, "(return)")
+        }
     }
 }
 
@@ -562,7 +502,7 @@ impl fmt::Display for ForStatement<'_> {
 pub enum StatementInner<'de> {
     Expression(Expression<'de>),
     Print(PrintStatement<'de>),
-    Return(Option<Expression<'de>>),
+    Return(ReturnStatement<'de>),
     Block(BlockStatement<'de>),
     Declaration(Declaration<'de>),
     If(IfStatement<'de>),
@@ -577,13 +517,7 @@ impl fmt::Display for Statement<'_> {
         match &self.inner {
             StatementInner::Expression(expr) => write!(f, "{}", expr),
             StatementInner::Print(print_stmt) => write!(f, "{}", print_stmt),
-            StatementInner::Return(ret) => {
-                write!(f, "(return")?;
-                if let Some(value) = ret {
-                    write!(f, " {}", value)?;
-                }
-                write!(f, ")")
-            }
+            StatementInner::Return(ret_stmt) => write!(f, "{}", ret_stmt),
             StatementInner::Block(block) => {
                 write!(f, "{{")?;
                 for statement in &block.inner.statements {

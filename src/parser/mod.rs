@@ -2,6 +2,8 @@ use miette::{Context, Error, LabeledSpan, WrapErr};
 use rustc_hash::FxHashSet as HashSet;
 use std::{borrow::Cow, collections::HashMap, fmt};
 
+mod resolver;
+
 use crate::{
     ast::{
         self, BinaryExpression, BinaryExpressionInner, BlockStatement, BlockStatementInner,
@@ -11,13 +13,15 @@ use crate::{
         ForStatement, ForStatementInner, FunctionDeclaration, FunctionDeclarationInner,
         GroupExpression, GroupExpressionInner, Identifier, IdentifierInner, IfStatement,
         IfStatementInner, Literal, LiteralInner, MemberExpression, MemberExpressionInner,
-        NilLiteral, NilLiteralInner, NumberLiteral, NumberLiteralInner, Op, PrintStatementInner, Program, ProgramInner, Spanned, Statement,
+        NilLiteral, NilLiteralInner, NumberLiteral, NumberLiteralInner, Op, PrintStatementInner,
+        Program, ProgramInner, ReturnStatement, ReturnStatementInner, Spanned, Statement,
         StatementInner, StringLiteral, StringLiteralInner, ThisExpression, ThisExpressionInner,
         TokenTree, TokenTreeInner, UnaryExpression, UnaryExpressionInner, VariableDeclaration,
         VariableDeclarationInner, Visitor, WhileStatement, WhileStatementInner,
     },
     error::{self, Eof},
     lexer::{Token, TokenKind},
+    parser::resolver::Resolver,
     Lexer,
 };
 
@@ -89,89 +93,10 @@ impl BindingPower {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub enum ScopeType {
-    Global,
-    Module,
-    Enclosed,
-}
-#[derive(Debug)]
-pub struct Scope<'de> {
-    pub scope_type: ScopeType,
-    pub bindings: HashMap<Cow<'de, str>, (usize, usize)>,
-}
-
-impl<'de> Scope<'de> {
-    pub fn new(scope_type: ScopeType) -> Self {
-        Self {
-            scope_type,
-            bindings: HashMap::default(),
-        }
-    }
-
-    pub fn is_global(&self) -> bool {
-        self.scope_type == ScopeType::Global
-    }
-
-    pub fn is_module(&self) -> bool {
-        self.scope_type == ScopeType::Module
-    }
-
-    pub fn is_enclosed(&self) -> bool {
-        self.scope_type == ScopeType::Enclosed
-    }
-}
-
-#[derive(Debug)]
-struct FunctionContext {
-    depth: u32,
-}
-
-#[derive(Debug)]
-pub struct ParserState<'de> {
-    scopes: Vec<Scope<'de>>,
-    function_context: FunctionContext,
-}
-impl<'de> ParserState<'de> {
-    pub fn new() -> Self {
-        Self {
-            scopes: vec![Scope::new(ScopeType::Global)],
-            function_context: FunctionContext { depth: 0 },
-        }
-    }
-
-    pub fn push_scope(&mut self, scope_type: ScopeType) {
-        self.scopes.push(Scope::new(scope_type))
-    }
-
-    pub fn pop_scope(&mut self) -> bool {
-        self.scopes.pop().is_some()
-    }
-
-    pub fn current_scope(&self) -> Result<&Scope, Error> {
-        self.scopes.last().ok_or_else(|| {
-            error::ParseInternalError {
-                message: "".to_string(),
-            }
-            .into()
-        })
-    }
-
-    pub fn current_scope_mut(&mut self) -> Result<&mut Scope<'de>, Error> {
-        self.scopes.last_mut().ok_or_else(|| {
-            error::ParseInternalError {
-                message: "".to_string(),
-            }
-            .into()
-        })
-    }
-}
-
 #[derive(Debug)]
 pub struct Parser<'de> {
     whole: &'de str,
     lexer: Lexer<'de>,
-    state: ParserState<'de>,
 }
 
 fn prefix_binding_power(op: Op) -> ((), BindingPower) {
@@ -224,14 +149,10 @@ impl<'de> Parser<'de> {
         Self {
             whole: input,
             lexer: Lexer::new(input),
-            state: ParserState::new(),
         }
     }
 
     pub fn parse(&mut self) -> Result<Program<'de>, Error> {
-        self.state.push_scope(ScopeType::Global);
-        self.state.push_scope(ScopeType::Module);
-
         let mut statements = vec![];
         loop {
             match self.parse_statement() {
@@ -242,27 +163,24 @@ impl<'de> Parser<'de> {
                     break;
                 }
                 Err(err) => {
-                    self.state.pop_scope();
                     return Err(err);
                 }
             }
         }
 
-        self.state.pop_scope();
-        self.state.pop_scope();
-        let program = Program {
+        let mut program = Program {
             inner: ProgramInner { body: statements },
             range: (0, self.whole.len()),
         };
+
+        let mut resolver = Resolver::new(self.whole());
+        resolver.resolve(&mut program)?;
+
         Ok(program)
     }
 
-    pub fn whole(&self) -> &str {
+    pub fn whole(&self) -> &'de str {
         self.whole
-    }
-
-    pub fn state(&self) -> &ParserState {
-        &self.state
     }
 
     pub fn parse_expression(&mut self) -> Result<Option<Expression<'de>>, Error> {
@@ -282,18 +200,16 @@ impl<'de> Parser<'de> {
                 .wrap_err("in block expression")?,
         };
 
-        self.state.push_scope(ScopeType::Enclosed);
-
-        if let Some(parameters) = parameters {
-            let bindings = &mut self.state.current_scope_mut()?.bindings;
-            for param in parameters {
-                if bindings.contains_key(&Cow::Borrowed(param.origin)) {}
-                bindings.insert(
-                    Cow::Borrowed(param.origin),
-                    (param.offset, param.offset + param.origin.len()),
-                );
-            }
-        }
+        // if let Some(parameters) = parameters {
+        //     let bindings = &mut self.state.current_scope_mut()?.bindings;
+        //     for param in parameters {
+        //         if bindings.contains_key(&Cow::Borrowed(param.origin)) {}
+        //         bindings.insert(
+        //             Cow::Borrowed(param.origin),
+        //             (param.offset, param.offset + param.origin.len()),
+        //         );
+        //     }
+        // }
 
         let mut statements = vec![];
 
@@ -319,7 +235,6 @@ impl<'de> Parser<'de> {
                 range: (left_brace.offset, end),
             };
 
-            self.state.pop_scope();
             return Ok(block);
         }
 
@@ -359,8 +274,6 @@ impl<'de> Parser<'de> {
             inner: BlockStatementInner { statements },
             range: (start, end),
         };
-
-        self.state.pop_scope();
 
         Ok(block)
     }
@@ -484,12 +397,12 @@ impl<'de> Parser<'de> {
                 }
 
                 // validate AST
-                variable_declaration.validate(self)?;
+                // variable_declaration.validate(self)?;
 
-                self.state.current_scope_mut()?.bindings.insert(
-                    variable_declaration.id.name.clone(),
-                    variable_declaration.id.range,
-                );
+                // self.state.current_scope_mut()?.bindings.insert(
+                //     variable_declaration.id.name.clone(),
+                //     variable_declaration.id.range,
+                // );
 
                 Statement {
                     range: variable_declaration.range,
@@ -759,7 +672,12 @@ impl<'de> Parser<'de> {
 
                 Statement {
                     range,
-                    inner: StatementInner::Print(Spanned { inner: PrintStatementInner { expression: expr.clone() }, range: expr.range }),
+                    inner: StatementInner::Print(Spanned {
+                        inner: PrintStatementInner {
+                            expression: expr.clone(),
+                        },
+                        range: expr.range,
+                    }),
                 }
             }
 
@@ -768,15 +686,15 @@ impl<'de> Parser<'de> {
                 offset,
                 origin,
             } => {
-                if self.state.function_context.depth == 0 {
-                    return Err(error::SyntaxError {
-                        src: self.whole.to_string(),
-                        message: "return statement is not allowed outside of a function"
-                            .to_string(),
-                        err_span: (offset..offset + origin.len()).into(),
-                    }
-                    .into());
-                }
+                // if self.state.function_context.depth == 0 {
+                //     return Err(error::SyntaxError {
+                //         src: self.whole.to_string(),
+                //         message: "return statement is not allowed outside of a function"
+                //             .to_string(),
+                //         err_span: (offset..offset + origin.len()).into(),
+                //     }
+                //     .into());
+                // }
 
                 let peek = self.lexer.peek();
 
@@ -794,9 +712,14 @@ impl<'de> Parser<'de> {
                         .expect("checked in if matches")
                         .expect("checked in if matches")
                         .offset;
+
+                    let range = (offset, semi_offset);
                     return Ok(Some(Statement {
-                        range: (offset, semi_offset),
-                        inner: StatementInner::Return(None),
+                        range,
+                        inner: StatementInner::Return(ReturnStatement {
+                            range,
+                            inner: ReturnStatementInner { expression: None },
+                        }),
                     }));
                 }
 
@@ -812,7 +735,12 @@ impl<'de> Parser<'de> {
 
                 Statement {
                     range,
-                    inner: StatementInner::Return(Some(expr)),
+                    inner: StatementInner::Return(ReturnStatement {
+                        range,
+                        inner: ReturnStatementInner {
+                            expression: Some(expr),
+                        },
+                    }),
                 }
             }
 
@@ -1481,7 +1409,6 @@ impl<'de> Parser<'de> {
         let start = start.unwrap_or(ident.range.0);
 
         let mut parameters = Vec::new();
-        let mut parameters_bindings: HashMap<&str, (usize, usize)> = HashMap::default();
 
         self.lexer
             .expect(TokenKind::LeftParen, "missing (")
@@ -1505,21 +1432,7 @@ impl<'de> Parser<'de> {
                         format!("in parameter #{} of function {name}", parameters.len() + 1)
                     })?;
 
-                if let Some(range) = parameters_bindings.get(parameter.origin) {
-                    return Err(error::RedeclarationError {
-                        src: self.whole().to_string(),
-                        name: parameter.origin.to_string(),
-                        err_span: (parameter.offset, parameter.origin.len()).into(),
-                        existing_span: (range.0..range.1).into(),
-                    }
-                    .into());
-                }
-
                 parameters.push(parameter);
-                parameters_bindings.insert(
-                    parameter.origin,
-                    (parameter.offset, parameter.offset + parameter.origin.len()),
-                );
 
                 let token = self
                     .lexer
@@ -1535,21 +1448,21 @@ impl<'de> Parser<'de> {
             }
         }
 
-        self.state.function_context.depth += 1;
+        // self.state.function_context.depth += 1;
 
         let block = self
             .parse_block(None, Some(&parameters))
             .wrap_err_with(|| format!("in body of function {name}"))?;
 
-        if self.state.function_context.depth == 0 {
-            // If we are at the top level, we should not allow function declarations
-            return Err(error::ParseInternalError {
-                message: "Function depths should not be 0 at this point".to_string(),
-            }
-            .into());
-        }
+        // if self.state.function_context.depth == 0 {
+        //     // If we are at the top level, we should not allow function declarations
+        //     return Err(error::ParseInternalError {
+        //         message: "Function depths should not be 0 at this point".to_string(),
+        //     }
+        //     .into());
+        // }
 
-        self.state.function_context.depth -= 1;
+        // self.state.function_context.depth -= 1;
 
         let range = (start, block.range.1);
 

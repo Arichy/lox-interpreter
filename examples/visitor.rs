@@ -19,13 +19,16 @@ fn main() {
     struct IdVisitor {}
 
     impl<'ast, 'de> Visitor<'ast, 'de> for IdVisitor {
+        type Output = ();
+        type Error = ();
         fn visit_identifier(
             &mut self,
             _ident: &'ast codecrafters_interpreter::ast::Identifier<'de>,
             _ctx: &mut VisitContext<'ast, 'de>,
-        ) -> () {
+        ) -> Result<(), ()> {
             println!("found id:{}", _ident);
             println!("parent: {:?}", _ctx.parent);
+            Ok(())
         }
     }
 
