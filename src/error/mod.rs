@@ -133,7 +133,7 @@ pub enum RuntimeError {
         err_span: SourceSpan,
     },
 
-    #[error("SyntaxError: {cause} must be inside a loop")]
+    #[error("Break/ContinueError: {cause} must be inside a loop")]
     BreakOrContinueOutsideLoop {
         #[source_code]
         src: String,
@@ -142,7 +142,7 @@ pub enum RuntimeError {
         err_span: SourceSpan,
     },
 
-    #[error("SyntaxError: this must be inside a class method")]
+    #[error("ThisError: this must be inside a class method")]
     InvalidThis {
         #[source_code]
         src: String,

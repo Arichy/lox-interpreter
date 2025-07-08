@@ -114,7 +114,11 @@ pub struct Object<'de> {
 #[derive(Debug)]
 pub struct Class<'de> {
     pub name: Cow<'de, str>,
-    pub init: Option<Value<'de>>,
+    pub init: Option<(
+        FunctionDeclaration<'de>,
+        Option<Environment<'de>>,
+        ClosureBindingEnv<'de>,
+    )>,
     pub methods: HashMap<
         Cow<'de, str>,
         (
@@ -218,7 +222,11 @@ impl<'de> Value<'de> {
 
     pub fn new_class(
         name: Cow<'de, str>,
-        init: Option<Value<'de>>,
+        init: Option<(
+            FunctionDeclaration<'de>,
+            Option<Environment<'de>>,
+            ClosureBindingEnv<'de>,
+        )>,
         methods: HashMap<
             Cow<'de, str>,
             (
@@ -766,35 +774,33 @@ impl<'de> Evaluator<'de> {
                             );
                         }
 
-                        match &class.init {
-                            Some(init) => {
-                                let ValueInner::Function(init) = &**init else {
-                                    return Err(error::RuntimeError::InternalError {
-                                        message: "class init must be a function".to_string(),
-                                    }
-                                    .into());
-                                };
+                        if let Some((decl, closure_env, closure_binding_env)) = &class.init {
+                            let init_fn = Value::new_function(
+                                decl,
+                                closure_env.clone(),
+                                closure_binding_env.clone(),
+                                Some(instance.clone()),
+                            );
+                            let ValueInner::Function(init_fn) = &*init_fn else {
+                                unreachable!()
+                            };
 
-                                if init.parameters.len() != call_expr.arguments.len() {
-                                    return Err(error::RuntimeError::BadOperandError {
-                                        src: self.whole.to_string(),
-                                        operator: "call".to_string(),
-                                        reason: format!(
-                                            "Expected {} arguments, but got {}",
-                                            init.parameters.len(),
-                                            call_expr.arguments.len()
-                                        ),
-                                        err_span: expr.range.into(),
-                                    }
-                                    .into());
+                            if init_fn.parameters.len() != call_expr.arguments.len() {
+                                return Err(error::RuntimeError::BadOperandError {
+                                    src: self.whole.to_string(),
+                                    operator: "call".to_string(),
+                                    reason: format!(
+                                        "Expected {} arguments, but got {}",
+                                        init_fn.parameters.len(),
+                                        call_expr.arguments.len()
+                                    ),
+                                    err_span: expr.range.into(),
                                 }
-
-                                // discard the return value of `init` constructor
-                                let _ =
-                                    self.call_func(init, vm, arguments, Some(instance.clone()))?;
+                                .into());
                             }
 
-                            None => {}
+                            // discard the return value of `init` constructor
+                            self.call_func(init_fn, vm, arguments, Some(instance.clone()))?;
                         }
 
                         Ok(instance)
@@ -1027,51 +1033,20 @@ impl<'de> Evaluator<'de> {
                                     self.collect_closure_binding_env(method, vm);
 
                                 if method.inner.name.name == "init" {
-                                    #[cfg(feature = "js_this")]
-                                    {
-                                        init = Some(Value::new_function(
-                                            method,
-                                            None,
-                                            closure_binding_env,
-                                            None,
-                                        ));
-                                    }
-
-                                    #[cfg(not(feature = "js_this"))]
-                                    {
-                                        init = Some(Value::new_function(
-                                            method,
-                                            None,
-                                            closure_binding_env,
-                                            None,
-                                        ));
-                                    }
+                                    init = Some((
+                                        method.clone(),
+                                        Some(vm.current_env.clone()),
+                                        closure_binding_env,
+                                    ));
                                 } else {
-                                    #[cfg(feature = "js_this")]
-                                    {
-                                        // methods.push(Value::new_function(method, None, Default::default()))
-                                        methods.insert(
-                                            method.inner.name.name.clone(),
-                                            (
-                                                method.clone(),
-                                                Some(vm.current_env.clone()),
-                                                closure_binding_env,
-                                            ),
-                                        );
-                                    }
-
-                                    #[cfg(not(feature = "js_this"))]
-                                    {
-                                        // methods.push(Value::new_function(method, None, Default::default()))
-                                        methods.insert(
-                                            method.inner.name.name.clone(),
-                                            (
-                                                method.clone(),
-                                                Some(vm.current_env.clone()),
-                                                closure_binding_env,
-                                            ),
-                                        );
-                                    }
+                                    methods.insert(
+                                        method.inner.name.name.clone(),
+                                        (
+                                            method.clone(),
+                                            Some(vm.current_env.clone()),
+                                            closure_binding_env,
+                                        ),
+                                    );
                                 }
                             }
 

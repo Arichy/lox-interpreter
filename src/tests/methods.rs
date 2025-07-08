@@ -199,3 +199,22 @@ fn test_this() {
         assert_lox_output(code, expected);
     }
 }
+
+#[test]
+fn test_init_call() {
+    {
+        let code = r#"
+          class Default {
+            init() {
+              this.x = "bar";
+              this.y = 91;
+            }
+          }
+          print Default().x;
+          print Default().y;
+        "#;
+
+        let expected: Vec<&str> = vec!["bar", "91"];
+        assert_lox_output(code, expected);
+    }
+}
