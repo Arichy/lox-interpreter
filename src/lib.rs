@@ -17,6 +17,9 @@ pub mod error;
 #[cfg(test)]
 mod integration_tests;
 
+#[cfg(test)]
+mod tests;
+
 // Thread-local storage for capturing output during tests
 #[cfg(test)]
 thread_local! {
