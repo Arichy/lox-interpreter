@@ -4,8 +4,8 @@ use miette::Error;
 
 use crate::{
     ast::{
-        ClassDeclaration, Expression, ExpressionInner, Identifier, Node, Program, ScopeType,
-        VariableDeclaration, VisitContext, Visitor,
+        ClassBodyItem, ClassBodyItemInner, ClassDeclaration, Expression, ExpressionInner,
+        Identifier, Node, Program, ScopeType, VariableDeclaration, VisitContext, Visitor,
     },
     error,
 };
@@ -194,5 +194,49 @@ impl<'ast, 'de> Visitor<'ast, 'de> for Resolver<'de> {
             err_span: (this.range.0..this.range.1).into(),
         }
         .into())
+    }
+
+    fn visit_class_declaration(
+        &mut self,
+        decl: &'ast ClassDeclaration<'de>,
+        ctx: &mut VisitContext<'ast, 'de>,
+    ) -> Result<Self::Output, Self::Error> {
+        for method in &decl.body.0 {
+            if let ClassBodyItemInner::ClassMethod(method) = &method.inner {
+                if method.name.name.as_ref() == "init" {
+                    struct ReturnVisitor {};
+                    impl<'ast, 'de> Visitor<'ast, 'de> for ReturnVisitor {
+                        type Output = ();
+                        type Error = (usize, usize);
+                        fn visit_return_statement(
+                            &mut self,
+                            return_stmt: &'ast crate::ast::ReturnStatement<'de>,
+                            ctx: &mut VisitContext<'ast, 'de>,
+                        ) -> Result<Self::Output, Self::Error> {
+                            if let None = return_stmt.expression {
+                                // init method cannot return anythint
+                                Ok(())
+                            } else {
+                                Err(return_stmt.range)
+                            }
+                        }
+                    }
+                    let mut return_visitor = ReturnVisitor {};
+                    let mut return_visitor_ctx = VisitContext::new();
+                    if let Err(err_span) =
+                        return_visitor.visit_function_declaration(&method, &mut return_visitor_ctx)
+                    {
+                        return Err(error::SyntaxError {
+                            src: self.whole.to_string(),
+                            message: "Can't return a value from an initializer".to_string(),
+                            err_span: (err_span.0..err_span.1).into(),
+                        }
+                        .into());
+                    }
+                }
+            }
+        }
+
+        self.walk_class_declaration(decl, ctx)
     }
 }

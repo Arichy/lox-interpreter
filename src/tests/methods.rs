@@ -217,4 +217,92 @@ fn test_init_call() {
         let expected: Vec<&str> = vec!["bar", "91"];
         assert_lox_output(code, expected);
     }
+
+    {
+        let code = r#"
+          class Robot {
+            init(model, function) {
+              this.model = model;
+              this.function = function;
+            }
+          }
+          print Robot("R2-D2", "Astromech").model;
+        "#;
+
+        let expected: Vec<&str> = vec!["R2-D2"];
+        assert_lox_output(code, expected);
+    }
+
+    {
+        let code = r#"
+            class Counter {
+              init(startValue) {
+                if (startValue < 0) {
+                  print "startValue can't be negative";
+                  this.count = 0;
+                } else {
+                  this.count = startValue;
+                }
+              }
+            }
+
+            var instance = Counter(-52);
+            print instance.count;
+            print instance.init(52).count;
+        "#;
+
+        let expected: Vec<&str> = vec!["startValue can't be negative", "0", "52"];
+        assert_lox_output(code, expected);
+    }
+
+    {
+        let code = r#"
+            class Vehicle {
+              init(type) {
+                this.type = type;
+              }
+            }
+
+            class Car {
+              init(make, model) {
+                this.make = make;
+                this.model = model;
+                this.wheels = "four";
+              }
+
+              describe() {
+                print this.make + " " + this.model +
+                " with " + this.wheels + " wheels";
+              }
+            }
+
+            var vehicle = Vehicle("Generic");
+            print "Generic " + vehicle.type;
+
+            var myCar = Car("Toyota", "Corolla");
+            myCar.describe();
+        "#;
+
+        let expected: Vec<&str> = vec!["Generic Generic", "Toyota Corolla with four wheels"];
+        assert_lox_output(code, expected);
+    }
+}
+
+#[test]
+fn test_return_within_init() {
+    {
+        let code = r#"
+            class Person {
+              init() {
+                print "world";
+                return;
+              }
+            }
+
+            Person();
+        "#;
+
+        let expected: Vec<&str> = vec!["world"];
+        assert_lox_output(code, expected);
+    }
 }

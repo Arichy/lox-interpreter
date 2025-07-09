@@ -277,3 +277,64 @@ fn test_invalid_this() {
     //     assert!(res.is_err());
     // }
 }
+
+#[test]
+fn test_return_within_init() {
+    {
+        let code = r#"
+            class ThingDefault {
+              init() {
+                this.x = "foo";
+                this.y = 42;
+                return this;
+              }
+            }
+            var out = ThingDefault();
+            print out;
+        "#;
+
+        let mut parser = Parser::new(code);
+        let res = parser.parse();
+
+        assert!(res.is_err());
+    }
+
+    {
+        let code = r#"
+            class Foo {
+              init() {
+                return "something else";
+              }
+            }
+
+            Foo();
+
+        "#;
+
+        let mut parser = Parser::new(code);
+        let res = parser.parse();
+
+        assert!(res.is_err());
+    }
+
+    {
+        let code = r#"
+               class Foo {
+                 init() {
+                   return this.callback();
+                 }
+
+                 callback() {
+                   return "callback";
+                 }
+               }
+
+               Foo();
+           "#;
+
+        let mut parser = Parser::new(code);
+        let res = parser.parse();
+
+        assert!(res.is_err());
+    }
+}

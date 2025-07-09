@@ -96,6 +96,7 @@ pub struct Function<'de> {
     pub closure_env: Option<Environment<'de>>,
     pub closure_binding_env: ClosureBindingEnv<'de>,
     pub this: Option<Value<'de>>,
+    pub is_method: bool,
 }
 
 impl Function<'_> {
@@ -114,11 +115,6 @@ pub struct Object<'de> {
 #[derive(Debug)]
 pub struct Class<'de> {
     pub name: Cow<'de, str>,
-    pub init: Option<(
-        FunctionDeclaration<'de>,
-        Option<Environment<'de>>,
-        ClosureBindingEnv<'de>,
-    )>,
     pub methods: HashMap<
         Cow<'de, str>,
         (
@@ -170,6 +166,7 @@ impl<'de> Value<'de> {
         closure_env: Option<Environment<'de>>,
         closure_binding_env: ClosureBindingEnv<'de>,
         this: Option<Value<'de>>,
+        is_method: bool,
     ) -> Self {
         Self {
             inner: Rc::new(ValueInner::Function(Function {
@@ -179,6 +176,7 @@ impl<'de> Value<'de> {
                 closure_env,
                 closure_binding_env,
                 this,
+                is_method,
             })),
         }
     }
@@ -222,11 +220,6 @@ impl<'de> Value<'de> {
 
     pub fn new_class(
         name: Cow<'de, str>,
-        init: Option<(
-            FunctionDeclaration<'de>,
-            Option<Environment<'de>>,
-            ClosureBindingEnv<'de>,
-        )>,
         methods: HashMap<
             Cow<'de, str>,
             (
@@ -237,11 +230,7 @@ impl<'de> Value<'de> {
         >,
     ) -> Self {
         Self {
-            inner: Rc::new(ValueInner::Class(Class {
-                name,
-                init,
-                methods,
-            })),
+            inner: Rc::new(ValueInner::Class(Class { name, methods })),
         }
     }
 }
@@ -714,7 +703,11 @@ impl<'de> Evaluator<'de> {
                         #[cfg(not(feature = "js_this"))]
                         let this = func.this.clone();
 
-                        let return_value = self.call_func(func, vm, arguments, this)?;
+                        let mut return_value = self.call_func(func, vm, arguments, this.clone())?;
+
+                        if func.name.as_ref() == "init" && func.is_method {
+                            return_value = this.expect("init must have this");
+                        }
 
                         // set cache
                         if is_pure_function {
@@ -760,6 +753,7 @@ impl<'de> Evaluator<'de> {
                                         closure_env.clone(),
                                         closure_binding_env.clone(),
                                         Some(instance.clone()),
+                                        true,
                                     )
                                 },
                                 #[cfg(feature = "js_this")]
@@ -769,17 +763,21 @@ impl<'de> Evaluator<'de> {
                                         closure_env.clone(),
                                         closure_binding_env.clone(),
                                         None,
+                                        true,
                                     )
                                 },
                             );
                         }
 
-                        if let Some((decl, closure_env, closure_binding_env)) = &class.init {
+                        if let Some((decl, closure_env, closure_binding_env)) =
+                            &class.methods.get("init")
+                        {
                             let init_fn = Value::new_function(
                                 decl,
                                 closure_env.clone(),
                                 closure_binding_env.clone(),
                                 Some(instance.clone()),
+                                true,
                             );
                             let ValueInner::Function(init_fn) = &*init_fn else {
                                 unreachable!()
@@ -1000,6 +998,7 @@ impl<'de> Evaluator<'de> {
                         Some(vm.current_env.clone()),
                         closure_binding_env,
                         None,
+                        false,
                     );
 
                     if let Ok(current_stack_frame) = vm.current_stack_frame_mut() {
@@ -1016,7 +1015,6 @@ impl<'de> Evaluator<'de> {
                 DeclarationInner::Class(class_decl) => {
                     let name = class_decl.id.name.clone();
 
-                    let mut init = None;
                     let mut methods: HashMap<
                         Cow<'_, str>,
                         (
@@ -1032,29 +1030,21 @@ impl<'de> Evaluator<'de> {
                                 let closure_binding_env =
                                     self.collect_closure_binding_env(method, vm);
 
-                                if method.inner.name.name == "init" {
-                                    init = Some((
+                                methods.insert(
+                                    method.inner.name.name.clone(),
+                                    (
                                         method.clone(),
                                         Some(vm.current_env.clone()),
                                         closure_binding_env,
-                                    ));
-                                } else {
-                                    methods.insert(
-                                        method.inner.name.name.clone(),
-                                        (
-                                            method.clone(),
-                                            Some(vm.current_env.clone()),
-                                            closure_binding_env,
-                                        ),
-                                    );
-                                }
+                                    ),
+                                );
                             }
 
                             _ => {}
                         }
                     }
 
-                    let class_value = Value::new_class(name.clone(), init, methods);
+                    let class_value = Value::new_class(name.clone(), methods);
 
                     let name = name.to_string();
 
