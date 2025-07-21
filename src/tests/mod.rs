@@ -30,3 +30,6 @@ pub mod methods;
 
 // Member expression parsing tests
 pub mod member_expressions;
+
+// Inheritance
+pub mod inheritance;

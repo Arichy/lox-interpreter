@@ -123,6 +123,7 @@ pub struct Class<'de> {
             ClosureBindingEnv<'de>,
         ),
     >,
+    pub superclass: Option<Value<'de>>,
 }
 
 impl<'de> ValueInner<'de> {
@@ -228,9 +229,14 @@ impl<'de> Value<'de> {
                 ClosureBindingEnv<'de>,
             ),
         >,
+        superclass: Option<Value<'de>>,
     ) -> Self {
         Self {
-            inner: Rc::new(ValueInner::Class(Class { name, methods })),
+            inner: Rc::new(ValueInner::Class(Class {
+                name,
+                methods,
+                superclass,
+            })),
         }
     }
 }
@@ -742,6 +748,45 @@ impl<'de> Evaluator<'de> {
                             unreachable!()
                         };
 
+                        let mut current_superclass = &class.superclass;
+                        while let Some(superclass) = current_superclass {
+                            let ValueInner::Class(superclass) = &*superclass.inner else {
+                                unreachable!()
+                            };
+
+                            for (name, (decl, closure_env, closure_binding_env)) in
+                                &superclass.methods
+                            {
+                                object
+                                    .borrow_mut()
+                                    .properties
+                                    .entry(name.to_string())
+                                    .or_insert(
+                                        #[cfg(not(feature = "js_this"))]
+                                        {
+                                            Value::new_function(
+                                                decl,
+                                                closure_env.clone(),
+                                                closure_binding_env.clone(),
+                                                Some(instance.clone()),
+                                                true,
+                                            )
+                                        },
+                                        #[cfg(feature = "js_this")]
+                                        {
+                                            Value::new_function(
+                                                decl,
+                                                closure_env.clone(),
+                                                closure_binding_env.clone(),
+                                                None,
+                                                true,
+                                            )
+                                        },
+                                    );
+                            }
+                            current_superclass = &superclass.superclass;
+                        }
+
                         for (name, (decl, closure_env, closure_binding_env)) in &class.methods {
                             // methods.insert(name.to_string(), method.clone());
                             object.borrow_mut().properties.insert(
@@ -1044,7 +1089,19 @@ impl<'de> Evaluator<'de> {
                         }
                     }
 
-                    let class_value = Value::new_class(name.clone(), methods);
+                    let superclass_value = class_decl
+                        .superclass
+                        .as_ref()
+                        .map(|superclass_id| {
+                            self.evaluate_identifier(
+                                superclass_id,
+                                vm,
+                                (superclass_id.range.0..superclass_id.range.1).into(),
+                            )
+                        })
+                        .transpose()?;
+
+                    let class_value = Value::new_class(name.clone(), methods, superclass_value);
 
                     let name = name.to_string();
 
