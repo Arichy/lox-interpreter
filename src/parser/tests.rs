@@ -352,3 +352,64 @@ fn inheritance_errors() {
         assert!(res.is_err());
     }
 }
+
+#[test]
+fn test_super() {
+    {
+        let code = r#"
+            class Doughnut {
+              cook() {
+                print "Fry until golden brown.";
+              }
+            }
+
+            // Super can be used to call the overridden method
+            // of the parent class
+            class BostonCream < Doughnut {
+              cook() {
+                super.cook();
+              }
+            }
+        "#;
+
+        let mut parser = Parser::new(code);
+        let res = parser.parse();
+
+        assert!(res.is_ok());
+    }
+
+    {
+        let code = r#"
+            class Foo {
+              cook() {
+                // Foo is not a subclass
+                super.cook(); // expect compile error
+              }
+            }
+        "#;
+
+        let mut parser = Parser::new(code);
+        let res = parser.parse();
+
+        assert!(res.is_err());
+    }
+
+    {
+        let code = r#"
+            class A {}
+
+            class B < A {
+              method() {
+                // super must be followed by `.`
+                // and an expression
+                super; // expect compile error
+              }
+            }
+        "#;
+
+        let mut parser = Parser::new(code);
+        let res = parser.parse();
+
+        assert!(res.is_err());
+    }
+}

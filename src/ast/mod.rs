@@ -372,6 +372,10 @@ pub struct ThisExpressionInner;
 pub type ThisExpression = Spanned<ThisExpressionInner>;
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct SuperExpressionInner;
+pub type SuperExpression = Spanned<SuperExpressionInner>;
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum ExpressionInner<'de> {
     Literal(Literal<'de>),
     Identifier(Identifier<'de>),
@@ -382,6 +386,7 @@ pub enum ExpressionInner<'de> {
     Call(CallExpression<'de>),
     Member(MemberExpression<'de>),
     This(ThisExpression),
+    Super(SuperExpression),
 }
 
 pub type Expression<'de> = Spanned<ExpressionInner<'de>>;
@@ -410,6 +415,9 @@ impl fmt::Display for Expression<'_> {
             }
             ExpressionInner::This(_) => {
                 write!(f, "this")
+            }
+            ExpressionInner::Super(_) => {
+                write!(f, "super")
             }
         }
     }

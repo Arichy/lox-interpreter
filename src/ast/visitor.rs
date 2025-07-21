@@ -24,6 +24,7 @@ pub enum Node<'ast, 'de> {
     CallExpression(&'ast CallExpression<'de>),
     MemberExpression(&'ast MemberExpression<'de>),
     ThisExpression(&'ast ThisExpression),
+    SuperExpressoin(&'ast SuperExpression),
     BlockStatement(&'ast BlockStatement<'de>),
     IfStatement(&'ast IfStatement<'de>),
     WhileStatement(&'ast WhileStatement<'de>),
@@ -337,6 +338,14 @@ pub trait Visitor<'ast, 'de> {
         Ok(Default::default())
     }
 
+    fn visit_super_expression(
+        &mut self,
+        _super: &'ast SuperExpression,
+        _ctx: &mut VisitContext<'ast, 'de>,
+    ) -> Result<Self::Output, Self::Error> {
+        Ok(Default::default())
+    }
+
     // Default walk implementations
     fn walk_program(
         &mut self,
@@ -395,6 +404,7 @@ pub trait Visitor<'ast, 'de> {
         expr: &'ast Expression<'de>,
         ctx: &mut VisitContext<'ast, 'de>,
     ) -> Result<Self::Output, Self::Error> {
+        ctx.push_node(Node::Expression(expr));
         match &expr.inner {
             ExpressionInner::Identifier(ident) => {
                 self.visit_identifier(ident, ctx)?;
@@ -423,7 +433,11 @@ pub trait Visitor<'ast, 'de> {
             ExpressionInner::This(this) => {
                 self.visit_this_expression(this, ctx)?;
             }
+            ExpressionInner::Super(_super) => {
+                self.visit_super_expression(_super, ctx)?;
+            }
         }
+        ctx.pop_node();
         Ok(Default::default())
     }
 

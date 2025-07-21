@@ -203,6 +203,7 @@ impl<'ast, 'de> Visitor<'ast, 'de> for Resolver<'de> {
     ) -> Result<Self::Output, Self::Error> {
         for method in &decl.body.0 {
             if let ClassBodyItemInner::ClassMethod(method) = &method.inner {
+                // check init return
                 if method.name.name.as_ref() == "init" {
                     struct ReturnVisitor {};
                     impl<'ast, 'de> Visitor<'ast, 'de> for ReturnVisitor {
@@ -234,6 +235,34 @@ impl<'ast, 'de> Visitor<'ast, 'de> for Resolver<'de> {
                         .into());
                     }
                 }
+
+                // check super
+                if decl.superclass.is_none() {
+                    struct SuperVisitor {};
+                    impl<'ast, 'de> Visitor<'ast, 'de> for SuperVisitor {
+                        type Output = ();
+                        type Error = (usize, usize);
+                        fn visit_super_expression(
+                            &mut self,
+                            _super: &'ast crate::ast::SuperExpression,
+                            _ctx: &mut VisitContext<'ast, 'de>,
+                        ) -> Result<Self::Output, Self::Error> {
+                            Err(_super.range)
+                        }
+                    }
+                    let mut return_visitor = SuperVisitor {};
+                    let mut return_visitor_ctx = VisitContext::new();
+                    if let Err(err_span) =
+                        return_visitor.visit_function_declaration(&method, &mut return_visitor_ctx)
+                    {
+                        return Err(error::SyntaxError {
+                            src: self.whole.to_string(),
+                            message: format!("{} is not a subclass", decl.id.name),
+                            err_span: (err_span.0..err_span.1).into(),
+                        }
+                        .into());
+                    }
+                }
             }
         }
 
@@ -249,5 +278,33 @@ impl<'ast, 'de> Visitor<'ast, 'de> for Resolver<'de> {
         }
 
         self.walk_class_declaration(decl, ctx)
+    }
+
+    fn visit_super_expression(
+        &mut self,
+        _super: &'ast crate::ast::SuperExpression,
+        _ctx: &mut VisitContext<'ast, 'de>,
+    ) -> Result<Self::Output, Self::Error> {
+        if !matches!(_ctx.ancestors.last(), Some(Node::MemberExpression(_))) {
+            return Err(error::SyntaxError {
+                src: self.whole.to_string(),
+                message: "Expect `.` after `super`".to_string(),
+                err_span: (_super.range.0.._super.range.1).into(),
+            }
+            .into());
+        }
+
+        for ancestor in &_ctx.ancestors {
+            if matches!(ancestor, Node::ClassDeclaration(_)) {
+                return Ok(());
+            }
+        }
+
+        Err(error::SyntaxError {
+            src: self.whole.to_string(),
+            message: "Can't use `super` outside of a class.".to_string(),
+            err_span: (_super.range.0.._super.range.1).into(),
+        }
+        .into())
     }
 }

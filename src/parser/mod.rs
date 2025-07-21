@@ -15,9 +15,10 @@ use crate::{
         IfStatementInner, Literal, LiteralInner, MemberExpression, MemberExpressionInner,
         NilLiteral, NilLiteralInner, NumberLiteral, NumberLiteralInner, Op, PrintStatementInner,
         Program, ProgramInner, ReturnStatement, ReturnStatementInner, Spanned, Statement,
-        StatementInner, StringLiteral, StringLiteralInner, ThisExpression, ThisExpressionInner,
-        TokenTree, TokenTreeInner, UnaryExpression, UnaryExpressionInner, VariableDeclaration,
-        VariableDeclarationInner, Visitor, WhileStatement, WhileStatementInner,
+        StatementInner, StringLiteral, StringLiteralInner, SuperExpression, SuperExpressionInner,
+        ThisExpression, ThisExpressionInner, TokenTree, TokenTreeInner, UnaryExpression,
+        UnaryExpressionInner, VariableDeclaration, VariableDeclarationInner, Visitor,
+        WhileStatement, WhileStatementInner,
     },
     error::{self, Eof},
     lexer::{Token, TokenKind},
@@ -978,14 +979,17 @@ impl<'de> Parser<'de> {
                 }),
                 range: (offset, offset + origin.len()),
             },
-            // Token {
-            //     kind: TokenKind::Super,
-            //     offset,
-            //     origin,
-            // } => TokenTree {
-            //     inner: TokenTreeInner::Atom(Atom::Super),
-            //     range: (offset, offset + origin.len()),
-            // },
+            Token {
+                kind: TokenKind::Super,
+                offset,
+                origin,
+            } => Expression {
+                inner: ExpressionInner::Super(SuperExpression {
+                    range: (offset, offset + origin.len()),
+                    inner: SuperExpressionInner,
+                }),
+                range: (offset, offset + origin.len()),
+            },
             Token {
                 kind: TokenKind::This,
                 offset,
