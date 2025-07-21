@@ -1101,6 +1101,21 @@ impl<'de> Evaluator<'de> {
                         })
                         .transpose()?;
 
+                    let is_legal = superclass_value
+                        .as_ref()
+                        .map_or(true, |v| matches!(&**v, ValueInner::Class(_)));
+                    if !is_legal {
+                        let superclass_ref =
+                            class_decl.superclass.as_ref().expect("checked in matches");
+                        return Err(error::RuntimeError::TypeError {
+                            src: self.whole.to_string(),
+                            ident: superclass_ref.name.to_string(),
+                            expected_type: "class".to_string(),
+                            err_span: (superclass_ref.range.0..superclass_ref.range.1).into(),
+                        }
+                        .into());
+                    }
+
                     let class_value = Value::new_class(name.clone(), methods, superclass_value);
 
                     let name = name.to_string();

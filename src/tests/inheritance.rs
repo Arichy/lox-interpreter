@@ -1,4 +1,4 @@
-use crate::tests::test_utils::assert_lox_output;
+use crate::tests::test_utils::{assert_lox_error, assert_lox_output};
 
 #[test]
 fn test_basic_syntax() {
@@ -236,5 +236,35 @@ fn test_inheriting_methods() {
             "Puppy speaks : Woof",
         ];
         assert_lox_output(code, expected);
+    }
+}
+
+#[test]
+fn test_inheritance_errors() {
+    {
+        let code = r#"
+            fun A() {}
+
+            // A class can only inherit from a class.
+            class B < A {} // expect runtime error
+
+            print A();
+            print B();
+        "#;
+
+        assert_lox_error(code);
+    }
+
+    {
+        let code = r#"
+          var A = "class";
+
+          // A class can only inherit from a class
+          class B < A {} // expect runtime error
+
+          print B();
+        "#;
+
+        assert_lox_error(code);
     }
 }

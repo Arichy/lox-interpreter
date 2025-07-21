@@ -338,3 +338,17 @@ fn test_return_within_init() {
         assert!(res.is_err());
     }
 }
+
+#[test]
+fn inheritance_errors() {
+    {
+        let code = r#"
+               class Foo < Foo {}
+           "#;
+
+        let mut parser = Parser::new(code);
+        let res = parser.parse();
+
+        assert!(res.is_err());
+    }
+}

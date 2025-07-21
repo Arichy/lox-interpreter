@@ -214,7 +214,7 @@ impl<'ast, 'de> Visitor<'ast, 'de> for Resolver<'de> {
                             ctx: &mut VisitContext<'ast, 'de>,
                         ) -> Result<Self::Output, Self::Error> {
                             if let None = return_stmt.expression {
-                                // init method cannot return anythint
+                                // init method cannot return anything
                                 Ok(())
                             } else {
                                 Err(return_stmt.range)
@@ -234,6 +234,17 @@ impl<'ast, 'de> Visitor<'ast, 'de> for Resolver<'de> {
                         .into());
                     }
                 }
+            }
+        }
+
+        if let Some(superclass) = &decl.superclass {
+            if superclass.name == decl.id.name {
+                return Err(error::SyntaxError {
+                    src: self.whole.to_string(),
+                    message: "A class can't inherit from itself.".to_string(),
+                    err_span: (decl.range.0..decl.range.1).into(),
+                }
+                .into());
             }
         }
 
