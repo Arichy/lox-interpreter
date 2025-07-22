@@ -285,7 +285,7 @@ impl<'ast, 'de> Visitor<'ast, 'de> for Resolver<'de> {
         _super: &'ast crate::ast::SuperExpression,
         _ctx: &mut VisitContext<'ast, 'de>,
     ) -> Result<Self::Output, Self::Error> {
-        if !matches!(_ctx.ancestors.last(), Some(Node::MemberExpression(_))) {
+        if !matches!(_ctx.parent, Some(Node::MemberExpression(_))) {
             return Err(error::SyntaxError {
                 src: self.whole.to_string(),
                 message: "Expect `.` after `super`".to_string(),

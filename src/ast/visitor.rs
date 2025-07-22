@@ -404,7 +404,6 @@ pub trait Visitor<'ast, 'de> {
         expr: &'ast Expression<'de>,
         ctx: &mut VisitContext<'ast, 'de>,
     ) -> Result<Self::Output, Self::Error> {
-        ctx.push_node(Node::Expression(expr));
         match &expr.inner {
             ExpressionInner::Identifier(ident) => {
                 self.visit_identifier(ident, ctx)?;
@@ -437,7 +436,6 @@ pub trait Visitor<'ast, 'de> {
                 self.visit_super_expression(_super, ctx)?;
             }
         }
-        ctx.pop_node();
         Ok(Default::default())
     }
 
@@ -973,6 +971,7 @@ mod tests {
                 ctx: &mut VisitContext<'ast, 'de>,
             ) -> Result<Self::Output, Self::Error> {
                 if let Some(parent) = &ctx.parent {
+                    println!("meet id: {}, parent: {:?}", ident.name, parent);
                     let parent_desc = match parent {
                         Node::VariableDeclaration(_) => "VarDecl".to_string(),
                         Node::FunctionDeclaration(_) => "FuncDecl".to_string(),

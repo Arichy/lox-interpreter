@@ -37,16 +37,20 @@ pub enum EnvironmentType {
     Enclosed,
 }
 
+pub type Bindings<'de> = HashMap<String, Rc<RefCell<Value<'de>>>>;
+
 #[derive(Debug)]
 pub struct EnvironmentInner<'de> {
     env_type: EnvironmentType, // Unique identifier for the environment
-    pub bindings: RefCell<HashMap<String, Value<'de>>>,
+    pub bindings: RefCell<Bindings<'de>>,
     pub parent: Option<Environment<'de>>,
 }
 
 impl<'de> EnvironmentInner<'de> {
     pub fn define(&self, name: String, value: Value<'de>) {
-        self.bindings.borrow_mut().insert(name, value);
+        self.bindings
+            .borrow_mut()
+            .insert(name, Rc::new(RefCell::new(value)));
     }
 
     pub fn get(&self, name: &str) -> Option<Value<'de>> {
@@ -61,7 +65,7 @@ impl<'de> EnvironmentInner<'de> {
         //         .join(", ")
         // );
         if let Some(value) = self.bindings.borrow().get(name) {
-            return Some(value.clone());
+            return Some((*value.borrow()).clone());
         }
 
         if let Some(parent) = &self.parent {
@@ -72,8 +76,14 @@ impl<'de> EnvironmentInner<'de> {
     }
 
     pub fn assign(&self, name: &str, value: Value<'de>) -> bool {
-        if self.bindings.borrow().contains_key(name) {
-            self.bindings.borrow_mut().insert(name.to_string(), value);
+        // if self.bindings.borrow().contains_key(name) {
+        //     // self.bindings.borrow_mut().insert(name.to_string(), value);
+        //     let var = self.bindings.borrow_mut().get(name);
+        //     return true;
+        // }
+
+        if let Some(binding_value_ptr) = self.bindings.borrow().get(name) {
+            *binding_value_ptr.borrow_mut() = value;
             return true;
         }
 
@@ -140,7 +150,8 @@ pub struct LoopContext {
 pub struct StackFrame<'de> {
     pub return_value: Option<Value<'de>>,
     pub env_before_call: Environment<'de>,
-    pub closure_binding_env: ClosureBindingEnv<'de>,
+    // pub closure_binding_env: ClosureBindingEnv<'de>,
+    pub closure_bindings: Bindings<'de>,
 
     // When js_this is enabled, we will store `this` on stack frame to dynamically bind `this` to callee object.
     // We also need a `captured_this_value` to handle closure which captures `this` in a method.
@@ -150,17 +161,23 @@ pub struct StackFrame<'de> {
     pub this_value: Option<Value<'de>>,
     #[cfg(feature = "js_this")]
     pub captured_this_value: Option<Value<'de>>,
+
+    pub function_value: Option<Value<'de>>,
 }
 
 impl<'de> StackFrame<'de> {
     pub fn new(
         env_before_call: Environment<'de>,
-        closure_binding_env: ClosureBindingEnv<'de>,
+        // closure_binding_env: ClosureBindingEnv<'de>,
+        closure_bindings: Bindings<'de>,
+        function_value: Option<Value<'de>>,
     ) -> Self {
         Self {
             env_before_call,
             return_value: None,
-            closure_binding_env,
+            // closure_binding_env,
+            closure_bindings,
+            function_value,
             #[cfg(feature = "js_this")]
             this_value: None,
             #[cfg(feature = "js_this")]
@@ -252,20 +269,22 @@ impl<'de> Vm<'de> {
 
     pub fn enter_function(
         &mut self,
-        closure_env: Option<Environment<'de>>,
-        closure_binding_env: ClosureBindingEnv<'de>,
+        closure_bindings: Bindings<'de>,
+        function_value: Value<'de>,
     ) {
         // 1. push a new stack frame with storing current environment
         let env_before_call = self.current_env.clone();
-        let new_stack_frame = StackFrame::new(env_before_call, closure_binding_env);
+        let new_stack_frame =
+            StackFrame::new(env_before_call, closure_bindings, Some(function_value));
         self.call_stack.push(new_stack_frame);
 
         // 2. create a new environment for the function call
-        let call_env = if let Some(closure_env) = closure_env {
-            closure_env.new_enclosed()
-        } else {
-            self.current_env.new_enclosed()
-        };
+        // let call_env = if let Some(closure_env) = closure_env {
+        //     closure_env.new_enclosed()
+        // } else {
+        //     self.current_env.new_enclosed()
+        // };
+        let call_env = self.current_env.new_enclosed();
 
         self.current_env = call_env;
     }
@@ -289,12 +308,26 @@ impl<'de> Vm<'de> {
         //     name,
         //     current_stack_frame.closure_binding_env.keys()
         // );
-        if let Some(closure_env) = current_stack_frame.closure_binding_env.get(name) {
+
+        // 1. check on current closure bindings
+        if let Some(closure_binding_ptr) = current_stack_frame.closure_bindings.get(name) {
             // if the variable is found in the closure bindings, try to get it in the parent environment
-            closure_env.get(name)
-        } else {
-            self.current_env.get(name)
+            return Some((*closure_binding_ptr.borrow()).clone());
         }
+
+        // 2. check if it's recursive closure function itself
+        for stack_frame in self.call_stack.iter().rev() {
+            if let Some(func_value) = &stack_frame.function_value {
+                let ValueInner::Function(func) = &*func_value.inner else {
+                    unreachable!()
+                };
+                if func.name == name {
+                    return Some(func_value.clone());
+                }
+            }
+        }
+
+        self.current_env.get(name)
     }
 
     pub fn define_variable(&mut self, name: String, value: Value<'de>) {
@@ -307,8 +340,10 @@ impl<'de> Vm<'de> {
             return self.current_env.assign(name, value);
         };
 
-        if let Some(closure_env) = current_stack_frame.closure_binding_env.get(name) {
-            return closure_env.assign(name, value);
+        if let Some(closure_binding_ptr) = current_stack_frame.closure_bindings.get(name) {
+            // return closure_env.assign(name, value);
+            (*closure_binding_ptr.borrow_mut()) = value;
+            return true;
         }
 
         self.current_env.assign(name, value)
@@ -388,6 +423,7 @@ impl<'de> Runner<'de> {
         self.vm.call_stack.push(StackFrame::new(
             self.vm.current_env.clone(),
             HashMap::default(),
+            None,
         ));
 
         self.vm.enter_module();

@@ -6,9 +6,11 @@ use std::{
     rc::Rc,
 };
 
-use rustc_hash::FxHashMap as HashMap;
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use crate::ast::VisitContext;
+#[cfg(not(feature = "js_this"))]
+use crate::runner::Bindings;
 
 use miette::{Error, LabeledSpan, SourceSpan};
 
@@ -93,17 +95,9 @@ pub struct Function<'de> {
     pub name: Cow<'de, str>,
     pub parameters: Vec<Identifier<'de>>,
     pub body: BlockStatement<'de>,
-    pub closure_env: Option<Environment<'de>>,
-    pub closure_binding_env: ClosureBindingEnv<'de>,
+    pub closure_bindings: Bindings<'de>,
     pub this: Option<Value<'de>>,
     pub is_method: bool,
-}
-
-impl Function<'_> {
-    fn is_pure(&self) -> bool {
-        // pure function: 1. no closure bindings 2. no side effects
-        self.closure_binding_env.is_empty()
-    }
 }
 
 #[derive(Debug)]
@@ -115,14 +109,7 @@ pub struct Object<'de> {
 #[derive(Debug)]
 pub struct Class<'de> {
     pub name: Cow<'de, str>,
-    pub methods: HashMap<
-        Cow<'de, str>,
-        (
-            FunctionDeclaration<'de>,
-            Option<Environment<'de>>,
-            ClosureBindingEnv<'de>,
-        ),
-    >,
+    pub methods: HashMap<Cow<'de, str>, (FunctionDeclaration<'de>, Bindings<'de>)>,
     pub superclass: Option<Value<'de>>,
 }
 
@@ -164,8 +151,7 @@ impl<'de> Value<'de> {
     #[cfg(not(feature = "js_this"))]
     pub fn new_function(
         func_decl: &FunctionDeclaration<'de>,
-        closure_env: Option<Environment<'de>>,
-        closure_binding_env: ClosureBindingEnv<'de>,
+        closure_bindings: Bindings<'de>,
         this: Option<Value<'de>>,
         is_method: bool,
     ) -> Self {
@@ -174,8 +160,7 @@ impl<'de> Value<'de> {
                 name: func_decl.name.name.clone(),
                 parameters: func_decl.parameters.clone(),
                 body: *func_decl.body.clone(),
-                closure_env,
-                closure_binding_env,
+                closure_bindings,
                 this,
                 is_method,
             })),
@@ -221,14 +206,7 @@ impl<'de> Value<'de> {
 
     pub fn new_class(
         name: Cow<'de, str>,
-        methods: HashMap<
-            Cow<'de, str>,
-            (
-                FunctionDeclaration<'de>,
-                Option<Environment<'de>>,
-                ClosureBindingEnv<'de>,
-            ),
-        >,
+        methods: HashMap<Cow<'de, str>, (FunctionDeclaration<'de>, Bindings<'de>)>,
         superclass: Option<Value<'de>>,
     ) -> Self {
         Self {
@@ -662,19 +640,19 @@ impl<'de> Evaluator<'de> {
                             .into());
                         }
 
-                        let is_pure_function = func.closure_binding_env.is_empty();
+                        // let is_pure_function = func.closure_binding_env.is_empty();
 
-                        let mut cache_key = None;
-                        if is_pure_function {
-                            // Check the cache for the pure function call
-                            cache_key = Some(build_cache_key(&callee_value, &arguments));
+                        // let mut cache_key = None;
+                        // if is_pure_function {
+                        //     // Check the cache for the pure function call
+                        //     cache_key = Some(build_cache_key(&callee_value, &arguments));
 
-                            if let Some(cached_value) =
-                                vm.pure_function_call_cache.get(cache_key.as_ref().unwrap())
-                            {
-                                return Ok(cached_value.clone());
-                            }
-                        }
+                        //     if let Some(cached_value) =
+                        //         vm.pure_function_call_cache.get(cache_key.as_ref().unwrap())
+                        //     {
+                        //         return Ok(cached_value.clone());
+                        //     }
+                        // }
 
                         // vm.enter_function(
                         //     func.closure_env.clone(),
@@ -709,17 +687,18 @@ impl<'de> Evaluator<'de> {
                         #[cfg(not(feature = "js_this"))]
                         let this = func.this.clone();
 
-                        let mut return_value = self.call_func(func, vm, arguments, this.clone())?;
+                        let mut return_value =
+                            self.call_func(callee_value.clone(), vm, arguments, this.clone())?;
 
                         if func.name.as_ref() == "init" && func.is_method {
                             return_value = this.expect("init must have this");
                         }
 
                         // set cache
-                        if is_pure_function {
-                            vm.pure_function_call_cache
-                                .insert(cache_key.unwrap(), return_value.clone());
-                        }
+                        // if is_pure_function {
+                        //     vm.pure_function_call_cache
+                        //         .insert(cache_key.unwrap(), return_value.clone());
+                        // }
 
                         return Ok(return_value);
                     }
@@ -754,9 +733,7 @@ impl<'de> Evaluator<'de> {
                                 unreachable!()
                             };
 
-                            for (name, (decl, closure_env, closure_binding_env)) in
-                                &superclass.methods
-                            {
+                            for (name, (decl, closure_bindings)) in &superclass.methods {
                                 object
                                     .borrow_mut()
                                     .properties
@@ -766,8 +743,7 @@ impl<'de> Evaluator<'de> {
                                         {
                                             Value::new_function(
                                                 decl,
-                                                closure_env.clone(),
-                                                closure_binding_env.clone(),
+                                                closure_bindings.clone(),
                                                 Some(instance.clone()),
                                                 true,
                                             )
@@ -776,8 +752,7 @@ impl<'de> Evaluator<'de> {
                                         {
                                             Value::new_function(
                                                 decl,
-                                                closure_env.clone(),
-                                                closure_binding_env.clone(),
+                                                closure_bindings.clone(),
                                                 None,
                                                 true,
                                             )
@@ -787,7 +762,7 @@ impl<'de> Evaluator<'de> {
                             current_superclass = &superclass.superclass;
                         }
 
-                        for (name, (decl, closure_env, closure_binding_env)) in &class.methods {
+                        for (name, (decl, closure_bindings)) in &class.methods {
                             // methods.insert(name.to_string(), method.clone());
                             object.borrow_mut().properties.insert(
                                 name.to_string(),
@@ -795,36 +770,26 @@ impl<'de> Evaluator<'de> {
                                 {
                                     Value::new_function(
                                         decl,
-                                        closure_env.clone(),
-                                        closure_binding_env.clone(),
+                                        closure_bindings.clone(),
                                         Some(instance.clone()),
                                         true,
                                     )
                                 },
                                 #[cfg(feature = "js_this")]
                                 {
-                                    Value::new_function(
-                                        decl,
-                                        closure_env.clone(),
-                                        closure_binding_env.clone(),
-                                        None,
-                                        true,
-                                    )
+                                    Value::new_function(decl, closure_bindings.clone(), None, true)
                                 },
                             );
                         }
 
-                        if let Some((decl, closure_env, closure_binding_env)) =
-                            &class.methods.get("init")
-                        {
-                            let init_fn = Value::new_function(
+                        if let Some((decl, closure_bindings)) = &class.methods.get("init") {
+                            let init_fn_value = Value::new_function(
                                 decl,
-                                closure_env.clone(),
-                                closure_binding_env.clone(),
+                                closure_bindings.clone(),
                                 Some(instance.clone()),
                                 true,
                             );
-                            let ValueInner::Function(init_fn) = &*init_fn else {
+                            let ValueInner::Function(init_fn) = &*init_fn_value else {
                                 unreachable!()
                             };
 
@@ -843,7 +808,7 @@ impl<'de> Evaluator<'de> {
                             }
 
                             // discard the return value of `init` constructor
-                            self.call_func(init_fn, vm, arguments, Some(instance.clone()))?;
+                            self.call_func(init_fn_value, vm, arguments, Some(instance.clone()))?;
                         }
 
                         Ok(instance)
@@ -1010,9 +975,7 @@ impl<'de> Evaluator<'de> {
 
                     if let Ok(current_stack_frame) = vm.current_stack_frame_mut() {
                         // If the variable was a closure binding, we remove it because it's being redefined
-                        current_stack_frame
-                            .closure_binding_env
-                            .remove(&variable_name);
+                        current_stack_frame.closure_bindings.remove(&variable_name);
                     }
 
                     vm.define_variable(variable_name, init);
@@ -1021,8 +984,11 @@ impl<'de> Evaluator<'de> {
                 DeclarationInner::Function(func_declaration) => {
                     let function_name = func_declaration.name.to_string();
 
-                    let closure_binding_env =
-                        self.collect_closure_binding_env(func_declaration, vm);
+                    let closure_bindings = self.collect_closure_bindings(func_declaration, vm);
+                    // println!(
+                    //     "decl func: {function_name} with closure_bindings: {:?}",
+                    //     closure_bindings
+                    // );
 
                     #[cfg(feature = "js_this")]
                     let function_value = {
@@ -1038,19 +1004,16 @@ impl<'de> Evaluator<'de> {
                     };
 
                     #[cfg(not(feature = "js_this"))]
-                    let function_value = Value::new_function(
+                    let mut function_value = Value::new_function(
                         func_declaration,
-                        Some(vm.current_env.clone()),
-                        closure_binding_env,
-                        None,
+                        closure_bindings,
+                        vm.current_env.get("this"),
                         false,
                     );
 
                     if let Ok(current_stack_frame) = vm.current_stack_frame_mut() {
                         // If the variable was a closure binding, we remove it because it's being redefined
-                        current_stack_frame
-                            .closure_binding_env
-                            .remove(&function_name);
+                        current_stack_frame.closure_bindings.remove(&function_name);
                     }
 
                     // Register the function in the current scope
@@ -1064,24 +1027,20 @@ impl<'de> Evaluator<'de> {
                         Cow<'_, str>,
                         (
                             FunctionDeclaration<'de>,
-                            Option<Environment<'de>>,
-                            ClosureBindingEnv<'de>,
+                            Bindings<'de>,
+                            // Option<Environment<'de>>,
+                            // ClosureBindingEnv<'de>,
                         ),
                     > = HashMap::default();
 
                     for item in &class_decl.body.0 {
                         match &item.inner {
                             ClassBodyItemInner::ClassMethod(method) => {
-                                let closure_binding_env =
-                                    self.collect_closure_binding_env(method, vm);
+                                let closure_bindings = self.collect_closure_bindings(method, vm);
 
                                 methods.insert(
                                     method.inner.name.name.clone(),
-                                    (
-                                        method.clone(),
-                                        Some(vm.current_env.clone()),
-                                        closure_binding_env,
-                                    ),
+                                    (method.clone(), closure_bindings),
                                 );
                             }
 
@@ -1122,7 +1081,7 @@ impl<'de> Evaluator<'de> {
 
                     if let Ok(current_stack_frame) = vm.current_stack_frame_mut() {
                         // If the variable was a closure binding, we remove it because it's being redefined
-                        current_stack_frame.closure_binding_env.remove(&name);
+                        current_stack_frame.closure_bindings.remove(&name);
                     }
                     // Register the function in the current scope
                     vm.define_variable(name, class_value);
@@ -1293,12 +1252,22 @@ impl<'de> Evaluator<'de> {
 
     fn call_func(
         &mut self,
-        func: &Function<'de>,
+        // func: &Function<'de>,
+        func_value: Value<'de>,
         vm: &mut Vm<'de>,
         arguments: Vec<Value<'de>>,
         this: Option<Value<'de>>,
     ) -> Result<Value<'de>, Error> {
-        vm.enter_function(func.closure_env.clone(), func.closure_binding_env.clone());
+        // println!(
+        //     "call func: {}, closure bindings: {:?}",
+        //     func.name, func.closure_bindings
+        // );
+
+        let ValueInner::Function(func) = &*func_value else {
+            unreachable!()
+        };
+
+        vm.enter_function(func.closure_bindings.clone(), func_value.clone());
 
         #[cfg(feature = "js_this")]
         {
@@ -1498,6 +1467,150 @@ impl<'de> Evaluator<'de> {
         visitor.visit_block_statement(&func_decl.inner.body, &mut ctx);
 
         binding_env
+    }
+
+    fn collect_closure_bindings<'ast, 'vm>(
+        &self,
+        func_decl: &'ast FunctionDeclaration<'de>,
+        vm: &'vm Vm<'de>,
+    ) -> Bindings<'de> {
+        // println!("start collect closure bindings for func {}", func_decl.name);
+        let mut bindings = HashMap::default();
+
+        struct AstVisitor<'ast, 'vm, 'de, 'local> {
+            func_decl: &'ast FunctionDeclaration<'de>,
+            vm: &'vm Vm<'de>,
+            bindings: &'local mut Bindings<'de>,
+            local_vars: HashSet<String>,
+        }
+
+        impl<'ast, 'vm, 'de, 'local> Visitor<'ast, 'de> for AstVisitor<'ast, 'vm, 'de, 'local> {
+            type Output = ();
+            type Error = Error;
+
+            fn visit_identifier(
+                &mut self,
+                identifier: &'ast Identifier<'de>,
+                _ctx: &mut VisitContext<'ast, 'de>,
+            ) -> Result<Self::Output, Self::Error> {
+                let name = identifier.inner.name.as_ref();
+                // println!("meet var {name}");
+
+                // @FIXME: maybe we need to remove `&& !self.vm.global.bindings.borrow().contains_key(name)`
+                // because closure_binding_env is used to tell if a function is pure.
+                // But if a global non-pure function is called, the function is not pure, but we'll regard it as pure, which is not correct.
+
+                // If it's not a local variable, check if it's in the environment
+                if !self.local_vars.contains(name)
+                    && !self.vm.global.bindings.borrow().contains_key(name)
+                {
+                    // println!("meet closure var: {}", name);
+                    let mut env_option = Some(self.vm.current_env.clone());
+
+                    let current_stack_frame = self.vm.current_stack_frame()?;
+                    if let Some(binding_in_closure_ptr) =
+                        current_stack_frame.closure_bindings.get(name)
+                    {
+                        self.bindings
+                            .insert(name.to_string(), binding_in_closure_ptr.clone());
+                    }
+
+                    while let Some(ref env) = env_option {
+                        if let Some(binding_in_env_ptr) = env.bindings.borrow().get(name) {
+                            self.bindings
+                                .insert(name.to_string(), binding_in_env_ptr.clone());
+                            break;
+                        }
+                        env_option = env.parent.clone();
+                    }
+                }
+
+                Ok(())
+            }
+
+            fn visit_assignment_expression(
+                &mut self,
+                expr: &'ast AssignmentExpression<'de>,
+                ctx: &mut VisitContext<'ast, 'de>,
+            ) -> Result<Self::Output, Self::Error> {
+                self.visit_expression(&expr.inner.right, ctx);
+                // Note: assignment target is handled separately as it may introduce new local variables
+
+                self.walk_assignment_expression(expr, ctx)
+            }
+
+            fn visit_variable_declaration(
+                &mut self,
+                decl: &'ast VariableDeclaration<'de>,
+                ctx: &mut VisitContext<'ast, 'de>,
+            ) -> Result<Self::Output, Self::Error> {
+                // Add the variable to local variables
+                self.local_vars
+                    .insert(decl.inner.id.inner.name.as_ref().to_string());
+
+                // Visit the initializer if present
+                if let Some(init) = &decl.inner.init {
+                    self.visit_expression(init, ctx);
+                }
+
+                self.walk_variable_declaration(decl, ctx)
+            }
+
+            fn visit_function_declaration(
+                &mut self,
+                decl: &'ast FunctionDeclaration<'de>,
+                ctx: &mut VisitContext<'ast, 'de>,
+            ) -> Result<Self::Output, Self::Error> {
+                // Add the function name to local variables
+                self.local_vars
+                    .insert(decl.inner.name.inner.name.as_ref().to_string());
+
+                for param in &decl.parameters {
+                    self.local_vars.insert(param.name.as_ref().to_string());
+                }
+
+                // Note: We don't visit the function body as it has its own scope
+
+                let ret = self.walk_function_declaration(decl, ctx);
+
+                for param in &decl.parameters {
+                    self.local_vars.remove(param.name.as_ref());
+                }
+
+                ret
+            }
+
+            fn visit_class_declaration(
+                &mut self,
+                decl: &'ast ClassDeclaration<'de>,
+                ctx: &mut VisitContext<'ast, 'de>,
+            ) -> Result<Self::Output, Self::Error> {
+                // Add the class name to local variables
+                self.local_vars
+                    .insert(decl.inner.id.inner.name.as_ref().to_string());
+
+                self.walk_class_declaration(decl, ctx)
+            }
+        }
+
+        // Initialize local variables with function parameters
+        let mut local_vars = HashSet::default();
+        for param in &func_decl.inner.parameters {
+            local_vars.insert(param.inner.name.as_ref().to_string());
+        }
+
+        let mut visitor = AstVisitor {
+            func_decl,
+            vm,
+            bindings: &mut bindings,
+            local_vars,
+        };
+
+        // Visit the function body to collect closure binding environment
+        let mut ctx = VisitContext::new();
+        visitor.visit_block_statement(&func_decl.inner.body, &mut ctx);
+
+        bindings
     }
 }
 
