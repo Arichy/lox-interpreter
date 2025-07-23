@@ -465,6 +465,7 @@ impl<'de> Parser<'de> {
                     | StatementInner::Expression(_)
                     | StatementInner::Break
                     | StatementInner::Continue
+                    | StatementInner::If(_)
                     | StatementInner::Return(_)
                     | StatementInner::Print(_) => {}
 
