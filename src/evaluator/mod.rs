@@ -227,11 +227,7 @@ impl fmt::Display for Value<'_> {
             ValueInner::Number(num) => write!(f, "{}", num),
             ValueInner::String(string) => write!(f, "{}", string),
             ValueInner::Function(func) => {
-                write!(
-                    f,
-                    "Function(name: {}, parameters: {:?})",
-                    func.name, func.parameters
-                )
+                write!(f, "<fn {}>", func.name)
             }
             ValueInner::Object(object) => match &object.borrow().class {
                 Some(class) => {
