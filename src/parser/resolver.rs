@@ -160,23 +160,6 @@ impl<'ast, 'de> Visitor<'ast, 'de> for Resolver<'de> {
         .into())
     }
 
-    fn visit_call_expression(
-        &mut self,
-        call: &'ast crate::ast::CallExpression<'de>,
-        ctx: &mut VisitContext<'ast, 'de>,
-    ) -> Result<Self::Output, Self::Error> {
-        if matches!(call.callee.inner, ExpressionInner::This(_)) {
-            return Err(error::SyntaxError {
-                src: self.whole.to_string(),
-                message: "this keyword is not allowed in a function call".to_string(),
-                err_span: (call.range.0..call.range.1).into(),
-            }
-            .into());
-        }
-
-        self.walk_call_expression(call, ctx)
-    }
-
     fn visit_this_expression(
         &mut self,
         this: &'ast crate::ast::ThisExpression,

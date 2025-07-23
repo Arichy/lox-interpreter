@@ -800,7 +800,7 @@ impl<'de> Evaluator<'de> {
                                         init_fn.parameters.len(),
                                         call_expr.arguments.len()
                                     ),
-                                    err_span: expr.range.into(),
+                                    err_span: (expr.range.0..expr.range.1).into(),
                                 }
                                 .into());
                             }
@@ -816,8 +816,8 @@ impl<'de> Evaluator<'de> {
                         return Err(error::RuntimeError::BadOperandError {
                             src: self.whole.to_string(),
                             operator: "call".to_string(),
-                            reason: "Callee must be a function".to_string(),
-                            err_span: expr.range.into(),
+                            reason: "callee must be a function".to_string(),
+                            err_span: (expr.range.0..expr.range.1).into(),
                         }
                         .into());
                     }
@@ -1087,14 +1087,15 @@ impl<'de> Evaluator<'de> {
             },
 
             StatementInner::Expression(expr) => {
-                self.evaluate_expression(expr, vm).map_err(|e| {
-                    error::RuntimeError::BadOperandError {
-                        src: self.whole.to_string(),
-                        operator: "expression".to_string(),
-                        reason: e.to_string(),
-                        err_span: (statement.range.0..statement.range.1).into(),
-                    }
-                })?;
+                // self.evaluate_expression(expr, vm).map_err(|e| {
+                //     error::RuntimeError::BadOperandError {
+                //         src: self.whole.to_string(),
+                //         operator: "expression".to_string(),
+                //         reason: e.to_string(),
+                //         err_span: (statement.range.0..statement.range.1).into(),
+                //     }
+                // })?;
+                self.evaluate_expression(expr, vm)?;
             }
 
             StatementInner::For(for_statement) => {
