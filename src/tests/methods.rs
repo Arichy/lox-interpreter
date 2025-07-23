@@ -286,6 +286,30 @@ fn test_init_call() {
         let expected: Vec<&str> = vec!["Generic Generic", "Toyota Corolla with four wheels"];
         assert_lox_output(code, expected);
     }
+    {
+        let code = r#"
+            class Foo {
+              init() {
+                this.secret = 42;
+              }
+            }
+
+            // Bar is a subclass of Foo
+            class Bar < Foo {}
+
+            // Baz is a subclass of Bar
+            class Baz < Bar {}
+
+            var baz = Baz();
+
+            // Baz should inherit the constructor from Foo
+            // which should set the secret value to 42
+            print baz.secret;
+        "#;
+
+        let expected: Vec<&str> = vec!["42"];
+        assert_lox_output(code, expected);
+    }
 }
 
 #[test]

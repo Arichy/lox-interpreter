@@ -780,13 +780,9 @@ impl<'de> Evaluator<'de> {
                             );
                         }
 
-                        if let Some((decl, closure_bindings)) = &class.methods.get("init") {
-                            let init_fn_value = Value::new_function(
-                                decl,
-                                closure_bindings.clone(),
-                                Some(instance.clone()),
-                                true,
-                            );
+                        let init_fn_value = object.borrow().properties.get("init").cloned();
+
+                        if let Some(init_fn_value) = init_fn_value {
                             let ValueInner::Function(init_fn) = &*init_fn_value else {
                                 unreachable!()
                             };
