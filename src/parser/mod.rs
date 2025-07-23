@@ -463,7 +463,11 @@ impl<'de> Parser<'de> {
                 match truthy_branch.inner {
                     StatementInner::Block(_)
                     | StatementInner::Expression(_)
-                    | StatementInner::Return(_) => {}
+                    | StatementInner::Break
+                    | StatementInner::Continue
+                    | StatementInner::Return(_)
+                    | StatementInner::Print(_) => {}
+
                     _ => {
                         return Err(error::SyntaxError {
                             src: self.whole.to_string(),
@@ -482,7 +486,8 @@ impl<'de> Parser<'de> {
                         | StatementInner::Break
                         | StatementInner::Continue
                         | StatementInner::If(_)
-                        | StatementInner::Return(_) => {}
+                        | StatementInner::Return(_)
+                        | StatementInner::Print(_) => {}
 
                         _ => {
                             return Err(error::SyntaxError {
