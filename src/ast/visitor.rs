@@ -971,7 +971,7 @@ mod tests {
                 ctx: &mut VisitContext<'ast, 'de>,
             ) -> Result<Self::Output, Self::Error> {
                 if let Some(parent) = &ctx.parent {
-                    println!("meet id: {}, parent: {:?}", ident.name, parent);
+                    // println!("meet id: {}, parent: {:?}", ident.name, parent);
                     let parent_desc = match parent {
                         Node::VariableDeclaration(_) => "VarDecl".to_string(),
                         Node::FunctionDeclaration(_) => "FuncDecl".to_string(),

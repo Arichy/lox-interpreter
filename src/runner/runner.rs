@@ -417,13 +417,7 @@ impl<'de> Runner<'de> {
     }
 
     pub fn run(mut self) -> Result<(), Error> {
-        let program = match self.evaluator.parser.parse() {
-            Ok(program) => program,
-            Err(e) => {
-                log_stderr!("{e:?}");
-                std::process::exit(65);
-            }
-        };
+        let program = self.evaluator.parser.parse()?;
 
         self.vm.call_stack.push(StackFrame::new(
             self.vm.current_env.clone(),

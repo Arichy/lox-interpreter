@@ -26,8 +26,8 @@ fn main() {
             _ident: &'ast codecrafters_interpreter::ast::Identifier<'de>,
             _ctx: &mut VisitContext<'ast, 'de>,
         ) -> Result<(), ()> {
-            println!("found id:{}", _ident);
-            println!("parent: {:?}", _ctx.parent);
+            // println!("found id:{}", _ident);
+            // println!("parent: {:?}", _ctx.parent);
             Ok(())
         }
     }

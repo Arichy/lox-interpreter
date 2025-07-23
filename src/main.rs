@@ -121,7 +121,10 @@ fn main() -> miette::Result<()> {
 
             if let Err(e) = runner.run() {
                 imp::log_stderr!("{e:?}");
-                std::process::exit(70);
+                match e.downcast::<imp::error::RuntimeError>() {
+                    Ok(runtime_error) => std::process::exit(70),
+                    Err(e) => std::process::exit(65),
+                }
             }
         }
 

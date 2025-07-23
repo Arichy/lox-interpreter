@@ -130,7 +130,6 @@ fn invalid_return() {
 
         let mut parser = Parser::new(code);
         let res = parser.parse();
-        println!("{res:?}");
         assert!(res.is_err())
     }
 
@@ -153,7 +152,6 @@ fn invalid_return() {
 
         let mut parser = Parser::new(code);
         let res = parser.parse();
-        println!("{res:?}");
         assert!(res.is_err())
     }
 
@@ -173,7 +171,6 @@ fn invalid_return() {
 
         let mut parser = Parser::new(code);
         let res = parser.parse();
-        println!("{res:?}");
         assert!(res.is_err())
     }
 }
@@ -216,7 +213,7 @@ fn test_call_expr() {
         let mut parser = Parser::new(code);
         let tts = parser.parse().unwrap();
         let tt = tts.inner.body.get(0).unwrap();
-        println!("{tt:#?}");
+        // println!("{tt:#?}");
     }
 }
 
@@ -246,8 +243,6 @@ fn test_invalid_this() {
 
         let mut parser = Parser::new(code);
         let res = parser.parse();
-
-        println!("{res:?}");
 
         assert!(res.is_err());
     }

@@ -705,8 +705,15 @@ impl<'de> Evaluator<'de> {
                             arguments.push(arg_value);
                         }
 
+                        let native_function_value = Value::new_nil();
+
+                        vm.enter_function(Default::default(), native_function_value);
+
                         // Call the native function
                         let ret = (native_func.fn_ptr)(&arguments);
+
+                        vm.leave_function();
+
                         return ret;
                     }
 
