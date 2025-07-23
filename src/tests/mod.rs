@@ -33,3 +33,6 @@ pub mod member_expressions;
 
 // Inheritance
 pub mod inheritance;
+
+// Super
+pub mod super_expr;

@@ -1047,12 +1047,23 @@ impl<'de> Evaluator<'de> {
                         )
                     };
 
+                    let class_value = if closure_bindings.contains_key("super") {
+                        let f = vm.current_stack_frame()?.function_value.as_ref().unwrap();
+                        let ValueInner::Function(func) = &**f else {
+                            unreachable!()
+                        };
+
+                        func.class_value.clone()
+                    } else {
+                        None
+                    };
+
                     #[cfg(not(feature = "js_this"))]
                     let mut function_value = Value::new_function(
                         func_declaration,
                         closure_bindings,
                         vm.current_env.get("this"),
-                        None,
+                        class_value,
                     );
 
                     if let Ok(current_stack_frame) = vm.current_stack_frame_mut() {
@@ -1632,6 +1643,16 @@ impl<'de> Evaluator<'de> {
                     .insert(decl.inner.id.inner.name.as_ref().to_string());
 
                 self.walk_class_declaration(decl, ctx)
+            }
+
+            fn visit_super_expression(
+                &mut self,
+                _super: &'ast crate::ast::SuperExpression,
+                _ctx: &mut VisitContext<'ast, 'de>,
+            ) -> Result<Self::Output, Self::Error> {
+                self.bindings
+                    .insert("super".to_string(), Rc::new(RefCell::new(Value::new_nil())));
+                Ok(())
             }
         }
 
