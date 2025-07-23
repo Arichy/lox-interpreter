@@ -285,18 +285,13 @@ impl<'de> Evaluator<'de> {
     pub fn evaluate_command(&mut self, vm: &mut Vm<'de>) -> Result<Value<'de>, Error> {
         let expr = self.parser.parse_expression()?;
         match expr {
-            Some(expr) => {
-                // self.evaluate_token_tree(&tt, state)
-                todo!()
+            Some(expr) => self.evaluate_expression(&expr, vm),
+            None => Err(error::SyntaxError {
+                src: self.whole.to_string(),
+                message: "expected an expression".to_string(),
+                err_span: (0..0).into(),
             }
-            None => {
-                return Err(error::SyntaxError {
-                    src: self.whole.to_string(),
-                    message: "expected an expression".to_string(),
-                    err_span: (0..0).into(),
-                }
-                .into());
-            } // self.evaluate_token_tree(&tt, state);
+            .into()),
         }
     }
 
