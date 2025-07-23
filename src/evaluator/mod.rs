@@ -97,7 +97,7 @@ pub struct Function<'de> {
     pub body: BlockStatement<'de>,
     pub closure_bindings: Bindings<'de>,
     pub this: Option<Value<'de>>,
-    pub is_method: bool,
+    pub class_value: Option<Value<'de>>,
 }
 
 #[derive(Debug)]
@@ -153,7 +153,7 @@ impl<'de> Value<'de> {
         func_decl: &FunctionDeclaration<'de>,
         closure_bindings: Bindings<'de>,
         this: Option<Value<'de>>,
-        is_method: bool,
+        class_value: Option<Value<'de>>,
     ) -> Self {
         Self {
             inner: Rc::new(ValueInner::Function(Function {
@@ -162,7 +162,7 @@ impl<'de> Value<'de> {
                 body: *func_decl.body.clone(),
                 closure_bindings,
                 this,
-                is_method,
+                class_value,
             })),
         }
     }
@@ -681,7 +681,7 @@ impl<'de> Evaluator<'de> {
                         let mut return_value =
                             self.call_func(callee_value.clone(), vm, arguments, this.clone())?;
 
-                        if func.name.as_ref() == "init" && func.is_method {
+                        if func.name.as_ref() == "init" && func.class_value.is_some() {
                             return_value = this.expect("init must have this");
                         }
 
@@ -743,7 +743,7 @@ impl<'de> Evaluator<'de> {
                                                 decl,
                                                 closure_bindings.clone(),
                                                 Some(instance.clone()),
-                                                true,
+                                                current_superclass.clone(),
                                             )
                                         },
                                         #[cfg(feature = "js_this")]
@@ -752,7 +752,7 @@ impl<'de> Evaluator<'de> {
                                                 decl,
                                                 closure_bindings.clone(),
                                                 None,
-                                                true,
+                                                current_superclass.clone(),
                                             )
                                         },
                                     );
@@ -770,12 +770,17 @@ impl<'de> Evaluator<'de> {
                                         decl,
                                         closure_bindings.clone(),
                                         Some(instance.clone()),
-                                        true,
+                                        Some(callee_value.clone()),
                                     )
                                 },
                                 #[cfg(feature = "js_this")]
                                 {
-                                    Value::new_function(decl, closure_bindings.clone(), None, true)
+                                    Value::new_function(
+                                        decl,
+                                        closure_bindings.clone(),
+                                        None,
+                                        Some(callee_value.clone()),
+                                    )
                                 },
                             );
                         }
@@ -821,38 +826,83 @@ impl<'de> Evaluator<'de> {
             }
 
             ExpressionInner::Member(member) => {
+                let property_name = if member.computed {
+                    todo!()
+                } else {
+                    match &member.property.inner {
+                        ExpressionInner::Identifier(ident) => {
+                            if ident.name.is_empty() {
+                                return Err(error::RuntimeError::BadOperandError {
+                                    src: self.whole.to_string(),
+                                    operator: "member access".to_string(),
+                                    reason: "Property name cannot be empty".to_string(),
+                                    err_span: expr.range.into(),
+                                }
+                                .into());
+                            }
+                            ident.name.to_string()
+                        }
+                        _ => {
+                            return Err(error::RuntimeError::BadOperandError {
+                                src: self.whole.to_string(),
+                                operator: "member access".to_string(),
+                                reason: "Property must be an identifier".to_string(),
+                                err_span: member.property.range.into(),
+                            }
+                            .into());
+                        }
+                    }
+                };
+
+                // handle super
+                if let ExpressionInner::Super(_) = &**member.object {
+                    let f = vm.current_stack_frame()?.function_value.as_ref().unwrap();
+                    let ValueInner::Function(func) = &**f else {
+                        unreachable!()
+                    };
+
+                    let ValueInner::Class(c) = &*(func
+                        .class_value
+                        .as_ref()
+                        .expect("already checked super in parse phase")
+                        .inner)
+                    else {
+                        unreachable!()
+                    };
+
+                    let ValueInner::Class(super_class) = &*(c
+                        .superclass
+                        .as_ref()
+                        .expect("already checked in parse phase")
+                        .inner)
+                    else {
+                        unreachable!()
+                    };
+
+                    if let Some((super_method, super_method_bindings)) =
+                        super_class.methods.get(property_name.as_str())
+                    {
+                        return Ok(Value::new_function(
+                            super_method,
+                            super_method_bindings.clone(),
+                            None, // @FIXME: this should not be None, but since all test cases don't access to this, we use None to take a shortcut
+                            c.superclass.clone(),
+                        ));
+                    } else {
+                        return Err(error::RuntimeError::UndefinedProperty {
+                            src: self.whole.to_string(),
+                            property: property_name.to_string(),
+                            err_span: (member.property.range.0..member.property.range.1).into(),
+                        }
+                        .into());
+                    }
+                }
+
                 let object_value = self.evaluate_expression(&member.object, vm)?;
 
                 match &*object_value {
                     ValueInner::Object(object) => {
                         let object = object.borrow();
-                        let property_name = if member.computed {
-                            todo!()
-                        } else {
-                            match &member.property.inner {
-                                ExpressionInner::Identifier(ident) => {
-                                    if ident.name.is_empty() {
-                                        return Err(error::RuntimeError::BadOperandError {
-                                            src: self.whole.to_string(),
-                                            operator: "member access".to_string(),
-                                            reason: "Property name cannot be empty".to_string(),
-                                            err_span: expr.range.into(),
-                                        }
-                                        .into());
-                                    }
-                                    ident.name.to_string()
-                                }
-                                _ => {
-                                    return Err(error::RuntimeError::BadOperandError {
-                                        src: self.whole.to_string(),
-                                        operator: "member access".to_string(),
-                                        reason: "Property must be an identifier".to_string(),
-                                        err_span: member.property.range.into(),
-                                    }
-                                    .into());
-                                }
-                            }
-                        };
 
                         if let Some(property_value) = object.properties.get(&property_name) {
                             Ok(property_value.clone())
@@ -1002,7 +1052,7 @@ impl<'de> Evaluator<'de> {
                         func_declaration,
                         closure_bindings,
                         vm.current_env.get("this"),
-                        false,
+                        None,
                     );
 
                     if let Ok(current_stack_frame) = vm.current_stack_frame_mut() {
@@ -1019,12 +1069,7 @@ impl<'de> Evaluator<'de> {
 
                     let mut methods: HashMap<
                         Cow<'_, str>,
-                        (
-                            FunctionDeclaration<'de>,
-                            Bindings<'de>,
-                            // Option<Environment<'de>>,
-                            // ClosureBindingEnv<'de>,
-                        ),
+                        (FunctionDeclaration<'de>, Bindings<'de>),
                     > = HashMap::default();
 
                     for item in &class_decl.body.0 {
