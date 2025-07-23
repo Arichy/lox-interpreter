@@ -8,22 +8,22 @@ fn test_run_print_statements() {
     // Stage: Print: Generate output (xy1)
     // Command: run
     // Test: Print statements should generate output
-    
+
     // Test print string literal
     let code = r#"print "Hello, World!";"#;
     let expected = vec!["Hello, World!"];
     assert_lox_output(code, expected);
-    
+
     // Test print number literal
     let code = r#"print 42;"#;
     let expected = vec!["42"];
     assert_lox_output(code, expected);
-    
+
     // Test print boolean literal
     let code = r#"print true;"#;
     let expected = vec!["true"];
     assert_lox_output(code, expected);
-    
+
     // Test print expression
     let code = r#"print 12 + 24;"#;
     let expected = vec!["36"];
@@ -35,7 +35,7 @@ fn test_run_multiple_print_statements() {
     // Stage: Print: Multiple statements (oe4)
     // Command: run
     // Test: Multiple print statements should generate multiple lines of output
-    
+
     let code = r#"
         print "first";
         print "second";
@@ -66,7 +66,11 @@ fn test_run_expression_statements() {
     // Expression statements don't produce output, but should execute without error
     let runner = crate::runner::Runner::new(code);
     let result = runner.run();
-    assert!(result.is_ok(), "Failed to run expression statements: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "Failed to run expression statements: {:?}",
+        result
+    );
 }
 
 #[test]
@@ -193,15 +197,29 @@ fn test_run_while_statements() {
     // Command: run
     // Test: While statements should work correctly
 
-    let code = r#"
-        var i = 0;
-        while (i < 3) {
-            print i;
-            i = i + 1;
-        }
-    "#;
-    let expected = vec!["0", "1", "2"];
-    assert_lox_output(code, expected);
+    {
+        let code = r#"
+            var i = 0;
+            while (i < 3) {
+                print i;
+                i = i + 1;
+            }
+        "#;
+        let expected = vec!["0", "1", "2"];
+        assert_lox_output(code, expected);
+    }
+
+    {
+        let code = r#"
+            fun f() {
+            while (!false) return "ok";
+            }
+
+            print f();
+        "#;
+        let expected = vec!["ok"];
+        assert_lox_output(code, expected);
+    }
 }
 
 #[test]

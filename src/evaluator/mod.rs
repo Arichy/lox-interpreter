@@ -1327,7 +1327,9 @@ impl<'de> Evaluator<'de> {
         vm: &mut Vm<'de>,
     ) -> Result<bool, Error> {
         // Ok(self.evaluate_expression(cond, state)?.boolean() && !self.check_should_break(state))
-        Ok(self.evaluate_expression(cond, vm)?.boolean() && !self.check_should_break(vm))
+        Ok(self.evaluate_expression(cond, vm)?.boolean()
+            && !self.check_should_break(vm)
+            && !self.check_should_return(vm))
     }
 
     // for simplicity, we try to collect all variables used in the function body
