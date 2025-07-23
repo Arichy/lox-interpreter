@@ -620,7 +620,10 @@ impl<'de> Parser<'de> {
 
                 // validate AST
                 match &body.inner {
-                    StatementInner::Block(_) | StatementInner::Expression(_) => {}
+                    StatementInner::Block(_)
+                    | StatementInner::Expression(_)
+                    | StatementInner::Print(_)
+                    | StatementInner::Return(_) => {}
                     _ => {
                         return Err(error::SyntaxError {
                             src: self.whole.to_string(),
