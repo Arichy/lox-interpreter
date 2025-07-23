@@ -11,6 +11,7 @@ use rustc_hash::FxHashMap as HashMap;
 
 use crate::{
     evaluator::ClosureBindingEnv,
+    log_stderr,
     runner::cache::{CacheKey, CallCache},
 };
 
@@ -267,11 +268,7 @@ impl<'de> Vm<'de> {
         }
     }
 
-    pub fn enter_function(
-        &mut self,
-        closure_bindings: Bindings<'de>,
-        function_value: Value<'de>,
-    ) {
+    pub fn enter_function(&mut self, closure_bindings: Bindings<'de>, function_value: Value<'de>) {
         // 1. push a new stack frame with storing current environment
         let env_before_call = self.current_env.clone();
         let new_stack_frame =
@@ -420,6 +417,14 @@ impl<'de> Runner<'de> {
     }
 
     pub fn run(mut self) -> Result<(), Error> {
+        let program = match self.evaluator.parser.parse() {
+            Ok(program) => program,
+            Err(e) => {
+                log_stderr!("{e:?}");
+                std::process::exit(65);
+            }
+        };
+
         self.vm.call_stack.push(StackFrame::new(
             self.vm.current_env.clone(),
             HashMap::default(),
@@ -427,8 +432,6 @@ impl<'de> Runner<'de> {
         ));
 
         self.vm.enter_module();
-
-        let program = self.evaluator.parser.parse()?;
 
         for statement in &program.body {
             self.run_statement(&statement)?;
