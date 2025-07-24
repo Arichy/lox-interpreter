@@ -14,7 +14,3 @@ thiserror = "1.0.65"
 chrono = "0.4.41"
 rustc-hash = "2.1.1"
 # thiserror = "1.0.38" # error handling
-
-[features]
-default = [] # by default, `this` would bind to the scope statically
-js_this = [] # if enabled, `this` would bind to the callee object dynamically

@@ -10,7 +10,6 @@ use std::{
 use rustc_hash::FxHashMap as HashMap;
 
 use crate::{
-    evaluator::ClosureBindingEnv,
     log_stderr,
     runner::cache::{CacheKey, CallCache},
 };
@@ -151,38 +150,21 @@ pub struct LoopContext {
 pub struct StackFrame<'de> {
     pub return_value: Option<Value<'de>>,
     pub env_before_call: Environment<'de>,
-    // pub closure_binding_env: ClosureBindingEnv<'de>,
     pub closure_bindings: Bindings<'de>,
-
-    // When js_this is enabled, we will store `this` on stack frame to dynamically bind `this` to callee object.
-    // We also need a `captured_this_value` to handle closure which captures `this` in a method.
-    // In default behavior when the feature is disabled, we could capture `this` in local bindings because `this` could be considered as a special variable.
-    // But in this feature, we cannot do it because `this` cannot be considered as a variable, so we need this ad-hoc field to store `this`.
-    #[cfg(feature = "js_this")]
-    pub this_value: Option<Value<'de>>,
-    #[cfg(feature = "js_this")]
-    pub captured_this_value: Option<Value<'de>>,
-
     pub function_value: Option<Value<'de>>,
 }
 
 impl<'de> StackFrame<'de> {
     pub fn new(
         env_before_call: Environment<'de>,
-        // closure_binding_env: ClosureBindingEnv<'de>,
         closure_bindings: Bindings<'de>,
         function_value: Option<Value<'de>>,
     ) -> Self {
         Self {
             env_before_call,
             return_value: None,
-            // closure_binding_env,
             closure_bindings,
             function_value,
-            #[cfg(feature = "js_this")]
-            this_value: None,
-            #[cfg(feature = "js_this")]
-            captured_this_value: None,
         }
     }
 }
@@ -191,7 +173,7 @@ impl<'de> StackFrame<'de> {
 pub struct Vm<'de> {
     pub global: Environment<'de>,
     pub current_env: Environment<'de>,
-    call_stack: Vec<StackFrame<'de>>,
+    pub call_stack: Vec<StackFrame<'de>>,
     loop_context_stack: Vec<LoopContext>,
     // cache for pure functions
     pub pure_function_call_cache: CallCache<'de>,

@@ -9,7 +9,6 @@ use std::{
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use crate::ast::VisitContext;
-#[cfg(not(feature = "js_this"))]
 use crate::runner::Bindings;
 
 use miette::{Error, LabeledSpan, SourceSpan};
@@ -32,9 +31,6 @@ use crate::{
     runner::{cache::build_cache_key, global::console, Environment, Vm},
     Parser,
 };
-
-// Type alias for closure binding environment
-pub type ClosureBindingEnv<'de> = HashMap<String, Environment<'de>>;
 
 unsafe impl Send for Value<'_> {}
 unsafe impl Sync for Value<'_> {}
@@ -77,19 +73,7 @@ pub enum ValueInner<'de> {
     Class(Class<'de>),
 }
 
-#[cfg(feature = "js_this")]
-#[derive(Debug)]
-pub struct Function<'de> {
-    // If a function in lox is not a method, then it is the same as function in js and would capture this in env it gets defined
-    pub name: Cow<'de, str>,
-    pub parameters: Vec<Identifier<'de>>,
-    pub body: BlockStatement<'de>,
-    pub closure_env: Option<Environment<'de>>,
-    pub closure_binding_env: ClosureBindingEnv<'de>,
-    pub captured_this: Option<Value<'de>>,
-}
 
-#[cfg(not(feature = "js_this"))]
 #[derive(Debug)]
 pub struct Function<'de> {
     pub name: Cow<'de, str>,
@@ -148,7 +132,6 @@ impl<'de> Value<'de> {
         }
     }
 
-    #[cfg(not(feature = "js_this"))]
     pub fn new_function(
         func_decl: &FunctionDeclaration<'de>,
         closure_bindings: Bindings<'de>,
@@ -163,25 +146,6 @@ impl<'de> Value<'de> {
                 closure_bindings,
                 this,
                 class_value,
-            })),
-        }
-    }
-
-    #[cfg(feature = "js_this")]
-    pub fn new_function(
-        func_decl: &FunctionDeclaration<'de>,
-        closure_env: Option<Environment<'de>>,
-        closure_binding_env: ClosureBindingEnv<'de>,
-        captured_this: Option<Value<'de>>,
-    ) -> Self {
-        Self {
-            inner: Rc::new(ValueInner::Function(Function {
-                name: func_decl.name.name.clone(),
-                parameters: func_decl.parameters.clone(),
-                body: *func_decl.body.clone(),
-                closure_env,
-                closure_binding_env,
-                captured_this,
             })),
         }
     }
@@ -598,15 +562,6 @@ impl<'de> Evaluator<'de> {
             }
 
             ExpressionInner::Call(call_expr) => {
-                // in js, `this` is evaluated dynamically and bound to the callee object
-                #[cfg(feature = "js_this")]
-                let this = if let ExpressionInner::Member(member) = &**call_expr.callee {
-                    let instance = self.evaluate_expression(&member.object, vm)?;
-                    Some(instance)
-                } else {
-                    None
-                };
-
                 let mut callee_value = self.evaluate_expression(&call_expr.callee, vm)?;
                 // arguments evaluation must happen before closure environment is set
                 let mut arguments = Vec::new();
@@ -674,8 +629,6 @@ impl<'de> Evaluator<'de> {
 
                         // vm.leave_function()?;
 
-                        // in lox, `this` is stored in function statically
-                        #[cfg(not(feature = "js_this"))]
                         let this = func.this.clone();
 
                         let mut return_value =
@@ -737,21 +690,11 @@ impl<'de> Evaluator<'de> {
                                     .properties
                                     .entry(name.to_string())
                                     .or_insert(
-                                        #[cfg(not(feature = "js_this"))]
                                         {
                                             Value::new_function(
                                                 decl,
                                                 closure_bindings.clone(),
                                                 Some(instance.clone()),
-                                                current_superclass.clone(),
-                                            )
-                                        },
-                                        #[cfg(feature = "js_this")]
-                                        {
-                                            Value::new_function(
-                                                decl,
-                                                closure_bindings.clone(),
-                                                None,
                                                 current_superclass.clone(),
                                             )
                                         },
@@ -764,21 +707,11 @@ impl<'de> Evaluator<'de> {
                             // methods.insert(name.to_string(), method.clone());
                             object.borrow_mut().properties.insert(
                                 name.to_string(),
-                                #[cfg(not(feature = "js_this"))]
                                 {
                                     Value::new_function(
                                         decl,
                                         closure_bindings.clone(),
                                         Some(instance.clone()),
-                                        Some(callee_value.clone()),
-                                    )
-                                },
-                                #[cfg(feature = "js_this")]
-                                {
-                                    Value::new_function(
-                                        decl,
-                                        closure_bindings.clone(),
-                                        None,
                                         Some(callee_value.clone()),
                                     )
                                 },
@@ -929,24 +862,6 @@ impl<'de> Evaluator<'de> {
             }
 
             ExpressionInner::This(this_expr) => {
-                #[cfg(feature = "js_this")]
-                {
-                    let current_stack_frame = vm.current_stack_frame()?;
-
-                    current_stack_frame
-                        .captured_this_value
-                        .clone()
-                        .or(current_stack_frame.this_value.clone())
-                        .ok_or_else(|| {
-                            error::RuntimeError::InvalidThis {
-                                src: self.whole.to_string(),
-                                err_span: (this_expr.range.0, this_expr.range.1).into(),
-                            }
-                            .into()
-                        })
-                }
-
-                #[cfg(not(feature = "js_this"))]
                 {
                     let this = vm.current_env.get("this").ok_or_else(|| {
                         error::RuntimeError::InvalidThis {
@@ -1034,19 +949,6 @@ impl<'de> Evaluator<'de> {
                     //     closure_bindings
                     // );
 
-                    #[cfg(feature = "js_this")]
-                    let function_value = {
-                        // capture this because we treat all functions like arrow function
-                        let captured_this = vm.current_stack_frame()?.this_value.clone();
-
-                        Value::new_function(
-                            func_declaration,
-                            Some(vm.current_env.clone()),
-                            closure_binding_env,
-                            captured_this,
-                        )
-                    };
-
                     let class_value = if closure_bindings.contains_key("super") {
                         let f = vm.current_stack_frame()?.function_value.as_ref().unwrap();
                         let ValueInner::Function(func) = &**f else {
@@ -1058,7 +960,6 @@ impl<'de> Evaluator<'de> {
                         None
                     };
 
-                    #[cfg(not(feature = "js_this"))]
                     let mut function_value = Value::new_function(
                         func_declaration,
                         closure_bindings,
@@ -1320,19 +1221,11 @@ impl<'de> Evaluator<'de> {
 
         vm.enter_function(func.closure_bindings.clone(), func_value.clone());
 
-        #[cfg(feature = "js_this")]
-        {
-            let current_stack_frame = vm.current_stack_frame_mut()?;
-            current_stack_frame.this_value = this;
-            current_stack_frame.captured_this_value = func.captured_this.clone();
-        }
-
         // let mut arguments = Vec::new();
         for (param, arg_value) in func.parameters.iter().zip(arguments) {
             vm.define_variable(param.to_string(), arg_value);
         }
 
-        #[cfg(not(feature = "js_this"))]
         if let Some(this) = &func.this {
             vm.define_variable("this".to_string(), this.clone());
         }
@@ -1383,143 +1276,6 @@ impl<'de> Evaluator<'de> {
         Ok(self.evaluate_expression(cond, vm)?.boolean()
             && !self.check_should_break(vm)
             && !self.check_should_return(vm))
-    }
-
-    // for simplicity, we try to collect all variables used in the function body
-    fn collect_closure_binding_env<'ast, 'vm>(
-        &self,
-        func_decl: &'ast FunctionDeclaration<'de>,
-        vm: &'vm Vm<'de>,
-    ) -> ClosureBindingEnv<'de> {
-        let mut binding_env = HashMap::default();
-
-        struct AstVisitor<'ast, 'vm, 'de, 'local> {
-            func_decl: &'ast FunctionDeclaration<'de>,
-            vm: &'vm Vm<'de>,
-            binding_env: &'local mut ClosureBindingEnv<'de>,
-            local_vars: std::collections::HashSet<String>,
-        }
-
-        impl<'ast, 'vm, 'de, 'local> Visitor<'ast, 'de> for AstVisitor<'ast, 'vm, 'de, 'local> {
-            type Output = ();
-            type Error = Error;
-
-            fn visit_identifier(
-                &mut self,
-                identifier: &'ast Identifier<'de>,
-                _ctx: &mut VisitContext<'ast, 'de>,
-            ) -> Result<Self::Output, Self::Error> {
-                let name = identifier.inner.name.as_ref();
-
-                // @FIXME: maybe we need to remove `&& !self.vm.global.bindings.borrow().contains_key(name)`
-                // because closure_binding_env is used to tell if a function is pure.
-                // But if a global non-pure function is called, the function is not pure, but we'll regard it as pure, which is not correct.
-
-                // If it's not a local variable, check if it's in the environment
-                if !self.local_vars.contains(name)
-                    && !self.vm.global.bindings.borrow().contains_key(name)
-                {
-                    // if let Some(value) = self.vm.current_env.get(name) {
-                    //     self.bindings.insert(name.to_string(), value);
-                    // }
-                    let mut env_option = Some(self.vm.current_env.clone());
-                    while let Some(ref env) = env_option {
-                        if env.bindings.borrow().contains_key(name) {
-                            self.binding_env.insert(name.to_string(), env.clone());
-                            break;
-                        }
-                        env_option = env.parent.clone();
-                    }
-                }
-
-                Ok(())
-            }
-
-            fn visit_assignment_expression(
-                &mut self,
-                expr: &'ast AssignmentExpression<'de>,
-                ctx: &mut VisitContext<'ast, 'de>,
-            ) -> Result<Self::Output, Self::Error> {
-                self.visit_expression(&expr.inner.right, ctx);
-                // Note: assignment target is handled separately as it may introduce new local variables
-                Ok(())
-            }
-
-            fn visit_variable_declaration(
-                &mut self,
-                decl: &'ast VariableDeclaration<'de>,
-                ctx: &mut VisitContext<'ast, 'de>,
-            ) -> Result<Self::Output, Self::Error> {
-                // Add the variable to local variables
-                self.local_vars
-                    .insert(decl.inner.id.inner.name.as_ref().to_string());
-
-                // Visit the initializer if present
-                if let Some(init) = &decl.inner.init {
-                    self.visit_expression(init, ctx);
-                }
-                Ok(())
-            }
-
-            fn visit_function_declaration(
-                &mut self,
-                decl: &'ast FunctionDeclaration<'de>,
-                _ctx: &mut VisitContext<'ast, 'de>,
-            ) -> Result<Self::Output, Self::Error> {
-                // Add the function name to local variables
-                self.local_vars
-                    .insert(decl.inner.name.inner.name.as_ref().to_string());
-
-                // Note: We don't visit the function body as it has its own scope
-                Ok(())
-            }
-
-            fn visit_class_declaration(
-                &mut self,
-                decl: &ClassDeclaration<'de>,
-                _ctx: &mut VisitContext<'ast, 'de>,
-            ) -> Result<Self::Output, Self::Error> {
-                // Add the class name to local variables
-                self.local_vars
-                    .insert(decl.inner.id.inner.name.as_ref().to_string());
-
-                Ok(())
-            }
-
-            fn visit_print_statement(
-                &mut self,
-                print_statement: &'ast PrintStatement<'de>,
-                ctx: &mut VisitContext<'ast, 'de>,
-            ) -> Result<Self::Output, Self::Error> {
-                // @XXX: print will cause side effect, so we pretend it is a global function
-                // so the function will not be regarded as a pure function and not get cached incorrectly
-                self.binding_env
-                    .insert("print".to_string(), self.vm.global.clone());
-
-                self.visit_expression(&print_statement.expression, ctx);
-
-                Ok(())
-            }
-        }
-
-        // Initialize local variables with function parameters
-        let mut local_vars = std::collections::HashSet::new();
-        for param in &func_decl.inner.parameters {
-            local_vars.insert(param.inner.name.as_ref().to_string());
-        }
-
-        let mut visitor = AstVisitor {
-            func_decl,
-            vm,
-            binding_env: &mut binding_env,
-            local_vars,
-        };
-
-        // Visit the function body to collect closure binding environment
-        let mut ctx = VisitContext::new();
-        visitor.visit_block_statement(&func_decl.inner.body, &mut ctx);
-
-        binding_env
     }
 
     fn collect_closure_bindings<'ast, 'vm>(
