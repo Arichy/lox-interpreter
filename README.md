@@ -7,7 +7,7 @@ A complete implementation of the [Lox programming language](https://craftinginte
 
 ## Demo
 
-![demo](./demo.gif)
+![demo](./demo.png)
 
 ## Error Handling
 
