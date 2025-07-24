@@ -173,75 +173,15 @@ codecrafters-interpreter-rust/
 │   ├── runner/              # Interpreter execution engine
 │   ├── error/               # Error handling and reporting
 │   └── tests/               # Comprehensive test suite
-├── examples/                # Example Lox programs
-└── simple_closure_demo.lox  # Interactive closure demonstration
-```
-
-## Architecture Overview
-
-### Lexer (`src/lexer.rs`)
-
-Converts Lox source code into tokens, handling:
-
-- Keywords, identifiers, literals
-- Operators and punctuation
-- String and number parsing
-- Comment filtering
-
-### Parser (`src/parser/`)
-
-Builds an Abstract Syntax Tree (AST) from tokens:
-
-- Recursive descent parsing
-- Operator precedence handling
-- Error recovery and reporting
-- Support for all Lox language constructs
-
-### Evaluator (`src/evaluator/`)
-
-Executes the AST with advanced closure support:
-
-- **Environment binding** for variable capture
-- **Scope management** with proper variable lifetime
-- **Function calls** with parameter binding
-- **Closure creation** with environment capture
-
-### Runner (`src/runner/`)
-
-Orchestrates the interpretation process:
-
-- Program execution flow
-- Global environment management
-- Error handling and reporting
-- Output coordination
-
-## Testing
-
-The project includes a comprehensive test suite with 26 tests covering:
-
-- **Unit Tests**: Core functionality like environment binding
-- **Integration Tests**: End-to-end behavior validation
-- **Closure Tests**: Variable capture, scope isolation, lifetime management
-- **Edge Cases**: Error conditions and boundary scenarios
-
-Run tests with different verbosity levels:
-
-```bash
-cargo test                    # Run all tests
-cargo test evaluator         # Run evaluator tests only
-cargo test -- --nocapture    # Show test output
+├── demos/                   # Example Lox programs to test features
+└── docs/                    # Detailed technical documentation
 ```
 
 ## Technical Highlights
 
 ### Closure Implementation
 
-The interpreter features a sophisticated closure system that properly handles:
-
-- **Variable Capture**: Automatic detection of free variables
-- **Environment Binding**: Creating closure environments at function definition
-- **Scope Resolution**: Multi-level variable lookup
-- **Lifetime Management**: Variables live as long as closures that capture them
+The interpreter features a sophisticated closure system that properly handles variable capture, state mutation, and variable lifetimes. For a detailed explanation of the implementation, please see the [Deep Dive: Closure Implementation](./docs/CLOSURE_IMPLEMENTATION.md) document.
 
 ### Error Handling
 
@@ -257,24 +197,6 @@ Comprehensive error reporting with:
 - **Efficient AST Evaluation**: Direct tree-walking interpreter
 - **Minimal Overhead**: Lightweight closure creation
 - **Memory Management**: Proper variable lifetime handling
-- **Fast Compilation**: Quick build times for development
-
-## Contributing
-
-This project follows standard Rust conventions:
-
-1. **Code Style**: Use `cargo fmt` for formatting
-2. **Linting**: Run `cargo clippy` for additional checks
-3. **Testing**: Ensure all tests pass with `cargo test`
-4. **Documentation**: Add tests for new features
-
-### Adding New Features
-
-1. Add lexer support for new tokens (if needed)
-2. Extend parser for new syntax
-3. Implement evaluation logic
-4. Add comprehensive tests
-5. Update documentation
 
 ## Language Reference
 
@@ -342,15 +264,7 @@ print local;   // error: undefined variable
 
 - [Crafting Interpreters Book](https://craftinginterpreters.com/) - The definitive guide to interpreter implementation
 - [Lox Language Specification](https://craftinginterpreters.com/the-lox-language.html) - Complete language reference
-- [Rust Documentation](https://doc.rust-lang.org/) - Rust language and standard library docs
 
 ## License
 
 This project is part of the [CodeCrafters](https://codecrafters.io) interpreter challenge and follows their terms of use.
-
----
-
-**Status**: Production Ready ✅  
-**Test Coverage**: 100% (26/26 tests passing) ✅  
-**Documentation**: Comprehensive ✅  
-**Features**: Complete Lox Language Support ✅
