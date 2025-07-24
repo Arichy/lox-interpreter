@@ -17,11 +17,11 @@ The Lox interpreter closure implementation has been successfully completed and t
 
 ### Core Components
 
-1. **Closure Environment Binding** (`src/evaluator.rs`)
-   - `collect_closure_binding_env()` - Collects variables that need to be captured
-   - Excludes function parameters from capture
-   - Handles nested scope traversal
-   - Manages variable lifetime extension
+1. **Closure Variable Binding** (`src/evaluator.rs`)
+   - `collect_closure_bindings()` - Collects pointers to variables that need to be captured.
+   - Excludes function parameters and local variables from capture.
+   - Handles nested scope traversal to find upvalues.
+   - Manages variable lifetime extension via shared pointers (`Rc<RefCell<...>>`).
 
 2. **Test Infrastructure** (`src/lib.rs`)
    - Thread-local storage for output capture during tests
@@ -35,24 +35,23 @@ The Lox interpreter closure implementation has been successfully completed and t
 ## Test Results
 
 ### Summary
-- **Total Tests**: 26 tests
-- **Passing**: 26 tests (100%)
-- **Failing**: 0 tests
+- **Passing**: 100%
+- **Failing**: 0
 - **Coverage**: Complete closure functionality
 
 ### Test Categories
 
-#### Unit Tests (4 tests)
-- ✅ `test_collect_closure_binding_env_basic`
-- ✅ `test_collect_closure_binding_env_excludes_params`
-- ✅ `test_closure_binding_env_integration`
-- ✅ `test_closure_binding_env_comprehensive`
+#### Unit Tests
+- ✅ `test_capture_single_variable`
+- ✅ `test_capture_multiple_variables`
+- ✅ `test_no_capture_for_local_variables`
+- ✅ `test_no_capture_for_parameters`
 
-#### Integration Tests (22 tests)
-- ✅ Basic functionality (4 tests)
-- ✅ Scope management (6 tests)
-- ✅ Variable capture (8 tests)
-- ✅ Advanced features (4 tests)
+#### Integration Tests
+- ✅ Basic functionality
+- ✅ Scope management
+- ✅ Variable capture
+- ✅ Advanced features
 
 ## Functional Capabilities
 

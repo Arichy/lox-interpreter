@@ -1,0 +1,12 @@
+
+// Demonstrates logical operators and truthiness
+
+print "Truthy values:";
+print true and 1;
+print false or "hello";
+
+print "Falsy values:";
+print true and nil;
+print false or nil;
+
+print nil or false; // expect: false

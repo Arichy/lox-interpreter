@@ -8,7 +8,7 @@ This is a complete implementation of the Lox programming language interpreter bu
 
 ### Key Highlights
 - **Complete Closure Support**: Full implementation of closures with proper variable capture and scope management
-- **Comprehensive Testing**: 26 tests covering all functionality (100% pass rate)
+- **Comprehensive Testing**: 100% pass rate
 - **Production Quality**: Stable, well-tested, and thoroughly documented
 - **Working Demos**: Multiple example programs demonstrating all features
 
@@ -37,41 +37,38 @@ This is a complete implementation of the Lox programming language interpreter bu
 ```
 codecrafters-interpreter-rust/
 ├── src/
-│   ├── main.rs              # Entry point
+│   ├── main.rs              # Entry point and CLI handling
 │   ├── lib.rs               # Library exports and test infrastructure
-│   ├── lexer.rs             # Token parsing and lexical analysis
-│   ├── parser.rs            # AST construction from tokens
-│   ├── ast.rs               # Abstract Syntax Tree definitions
-│   ├── evaluator.rs         # Expression evaluation and closure binding
-│   ├── runner.rs            # Main interpreter execution logic
-│   ├── error.rs             # Error handling and reporting
-│   └── integration_tests.rs # Comprehensive integration test suite
-├── CLOSURE_BINDING_ENV.md   # Technical closure implementation details
-├── CLOSURE_STATUS_REPORT.md # Complete status report
-├── TEST_SUMMARY.md          # Test documentation
-├── simple_closure_demo.lox  # Working demo program
-└── README.md               # Original project documentation
+│   ├── lexer.rs             # Tokenization and lexical analysis
+│   ├── parser/              # AST construction from tokens
+│   ├── ast/                 # Abstract Syntax Tree definitions
+│   ├── evaluator/           # Expression evaluation and closures
+│   ├── runner/              # Interpreter execution engine
+│   ├── error/               # Error handling and reporting
+│   └── tests/               # Comprehensive test suite
+├── demos/                   # Example Lox programs
+└── docs/                    # Technical documentation
 ```
 
 ### Key Components
 
-1. **Lexer** (`lexer.rs`)
+1. **Lexer** (`src/lexer.rs`)
    - Tokenizes Lox source code
    - Handles all Lox syntax elements
    - Provides tokens for parser consumption
 
-2. **Parser** (`parser.rs`)
+2. **Parser** (`src/parser/`)
    - Builds Abstract Syntax Tree from tokens
    - Handles all Lox language constructs
    - Manages operator precedence and associativity
 
-3. **Evaluator** (`evaluator.rs`)
+3. **Evaluator** (`src/evaluator/`)
    - Executes AST nodes
    - **Closure Implementation**: Advanced closure environment binding
    - Variable scope management
    - Function call handling
 
-4. **Runner** (`runner.rs`)
+4. **Runner** (`src/runner/`)
    - Orchestrates the interpretation process
    - Handles program execution flow
    - Manages global state
@@ -83,9 +80,9 @@ codecrafters-interpreter-rust/
 - **Environment Detection**: Different behavior for test vs production
 - **Output Macros**: `log_stdout!` and `log_stderr!` for environment-aware logging
 
-### Test Coverage (26 Tests)
-- **Unit Tests (4)**: Core closure environment binding functionality
-- **Integration Tests (22)**: End-to-end closure behavior validation
+### Test Coverage
+- **Unit Tests**: Core closure environment binding functionality
+- **Integration Tests**: End-to-end closure behavior validation
 
 ### Test Categories
 - **Basic Functionality**: Variable assignment, function calls, print statements
@@ -97,11 +94,11 @@ codecrafters-interpreter-rust/
 
 ### Running the Interpreter
 ```bash
-# Run a Lox program
-./your_program.sh run program.lox
+# Run one of the included demo files
+cargo run -- run demos/simple_closure_demo.lox
 
-# Run the demo
-./your_program.sh run simple_closure_demo.lox
+# Or run your own Lox file
+cargo run -- run path/to/your/program.lox
 ```
 
 ### Running Tests
@@ -175,10 +172,12 @@ closure();  // 42 (works even after localVar is out of scope)
 ## Documentation
 
 ### Technical Documentation
-- **CLOSURE_BINDING_ENV.md**: Deep dive into closure implementation
-- **CLOSURE_STATUS_REPORT.md**: Complete implementation status
-- **TEST_SUMMARY.md**: Comprehensive test documentation
-- **PROJECT_OVERVIEW.md**: This file - project overview
+- **CLOSURE_IMPLEMENTATION.md**: A deep dive into how closures are implemented.
+- **VISITOR_PATTERN.md**: An explanation of the AST Visitor Pattern design.
+- **CLOSURE_STATUS_REPORT.md**: A report on the status of the closure feature.
+- **TEST_IMPROVEMENTS.md**: A summary of improvements made to the test suite.
+- **TEST_SUMMARY.md**: An overview of the test suite structure and coverage.
+- **PROJECT_OVERVIEW.md**: This file.
 
 ### Code Documentation
 - Inline comments throughout codebase
@@ -195,7 +194,7 @@ closure();  // 42 (works even after localVar is out of scope)
 - **Memory Management**: Proper variable lifetime handling
 
 ### Testing Quality
-- **100% Test Pass Rate**: All 26 tests passing
+- **100% Test Pass Rate**
 - **Comprehensive Coverage**: All closure scenarios tested
 - **Edge Case Testing**: Boundary conditions and error cases
 - **Integration Testing**: End-to-end behavior validation

@@ -14,20 +14,20 @@ This document summarizes the comprehensive test suite for the Lox interpreter's 
   - In production: Normal stdout/stderr output
 
 ### Test Structure
-- **Unit Tests**: 4 tests in `evaluator::tests` module
-- **Integration Tests**: 22 tests in `integration_tests` module
-- **Total**: 26 tests covering closure functionality
+- **Unit Tests**: Located in `evaluator::tests` module
+- **Integration Tests**: Located in `integration_tests` module
 
-## Unit Tests (4 tests)
+## Unit Tests
 
-Located in `src/evaluator.rs`, these tests verify the low-level closure environment binding mechanism:
+Located in `src/evaluator/tests.rs`, these tests verify the low-level closure variable capture mechanism (`collect_closure_bindings`):
 
-1. **`test_collect_closure_binding_env_basic`** - Tests basic closure environment collection
-2. **`test_collect_closure_binding_env_excludes_params`** - Ensures parameters are excluded from closure environment
-3. **`test_closure_binding_env_integration`** - Tests integration of closure binding with evaluation
-4. **`test_closure_binding_env_comprehensive`** - Comprehensive test of closure environment behavior
+1. **`test_capture_single_variable`** - Verifies that a single upvalue is correctly captured.
+2. **`test_capture_multiple_variables`** - Ensures multiple distinct upvalues are captured.
+3. **`test_no_capture_for_local_variables`** - Confirms that variables local to the function are not captured.
+4. **`test_no_capture_for_parameters`** - Ensures that function parameters are not treated as upvalues.
+5. **`test_capture_with_shadowing`** - Checks that the correct variable is captured when a local variable shadows an upvalue.
 
-## Integration Tests (22 tests)
+## Integration Tests
 
 Located in `src/integration_tests.rs`, these tests verify end-to-end closure functionality:
 
@@ -63,24 +63,24 @@ Located in `src/integration_tests.rs`, these tests verify end-to-end closure fun
 
 ## Test Categories
 
-### 1. Basic Functionality (4 tests)
+### 1. Basic Functionality
 - Simple print statements
 - Variable assignment and access
 - Basic closure creation and execution
 
-### 2. Scope Management (6 tests)
+### 2. Scope Management
 - Variable shadowing
 - Scope isolation
 - Complex scoping scenarios
 - Nested scopes
 
-### 3. Variable Capture (8 tests)
+### 3. Variable Capture
 - Capturing variables from different scopes
 - Mutable variable capture
 - Variable lifetime management
 - Global vs local variable interaction
 
-### 4. Advanced Features (4 tests)
+### 4. Advanced Features
 - Multiple closures sharing environment
 - Closure chains and nesting
 - Parameter handling
@@ -115,7 +115,7 @@ cargo test -- --nocapture
 
 ## Test Results
 
-All 26 tests pass successfully, demonstrating:
+All tests pass successfully, demonstrating:
 - ✅ Correct closure environment binding
 - ✅ Proper variable capture and scope management
 - ✅ Mutable variable handling in closures
